@@ -1,0 +1,124 @@
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
+from typing import List
+
+import pytz
+from fastapi import APIRouter, Depends
+from pydantic import BaseModel
+from sqlalchemy.orm import Session
+
+from app.db.base import get_db
+from app.models.client import Client
+from app.models.country import Country
+from app.models.deploy_rule import DeployRule, DeployStatus
+from app.models.integration_config import IntegrationConfig
+from app.models.promotion import Promotion
+from app.rules.engine import _active_promotions_on_date, can_deploy_now, compute_day_status
+from app.services import tracker
+
+router = APIRouter(prefix="/public", tags=["public"])
+
+GA4_CREDS_KEY = "ga4_service_account"
+
+
+class ClientStatusOut(BaseModel):
+    client_id: int
+    client_name: str
+    country_name: str
+    country_iso: str
+    timezone: str
+    deploy_status: DeployStatus
+    can_deploy_now: bool
+    window_start: str | None
+    window_end: str | None
+    active_promo_count: int
+    ga4_active_users: int | None = None
+    ga4_by_country: dict[str, int] = {}
+    ga4_top_pages: list[dict] = []
+
+
+class PublicStatusOut(BaseModel):
+    generated_at: str
+    clients: List[ClientStatusOut]
+
+
+def _fetch_ga4_for_client(creds: str, client_id: int, property_id: str) -> tuple[int, dict | None]:
+    try:
+        from app.services.ga4_service import get_active_users
+        return client_id, get_active_users(creds, property_id)
+    except Exception:
+        return client_id, None
+
+
+def _fetch_all_ga4(db: Session, clients: list) -> dict[int, dict]:
+    cfg = db.query(IntegrationConfig).filter(IntegrationConfig.key == GA4_CREDS_KEY).first()
+    if not cfg:
+        return {}
+    targets = [c for c in clients if c.ga4_property_id]
+    if not targets:
+        return {}
+    result: dict[int, dict] = {}
+    with ThreadPoolExecutor(max_workers=min(len(targets), 8)) as pool:
+        futures = {pool.submit(_fetch_ga4_for_client, cfg.value, c.id, c.ga4_property_id): c.id for c in targets}
+        for future in as_completed(futures):
+            cid, data = future.result()
+            if data is not None:
+                result[cid] = data
+    return result
+
+
+@router.get("/status", response_model=PublicStatusOut)
+def public_status(db: Session = Depends(get_db)):
+    rules = db.query(DeployRule).all()
+    clients = db.query(Client).all()
+    active_by_client = tracker.all_active()
+    ga4_by_client = _fetch_all_ga4(db, clients)
+
+    results: List[ClientStatusOut] = []
+
+    for client in clients:
+        country: Country = db.get(Country, client.country_id)
+        tz = pytz.timezone(country.timezone)
+        today = datetime.now(tz).date()
+
+        promotions = (
+            db.query(Promotion)
+            .filter(
+                Promotion.client_id == client.id,
+                Promotion.start_date <= today,
+                Promotion.end_date >= today,
+            )
+            .all()
+        )
+
+        active = _active_promotions_on_date(promotions, today)
+        status, ws, we = compute_day_status(today, active, rules)
+        can_now = can_deploy_now(status, ws, we, country.timezone)
+
+        ga4_data = ga4_by_client.get(client.id)
+        # GA4 preferred; fallback to in-memory GTM tracker
+        users = ga4_data["active_users"] if ga4_data else active_by_client.get(client.id)
+
+        results.append(
+            ClientStatusOut(
+                client_id=client.id,
+                client_name=client.name,
+                country_name=country.name,
+                country_iso=country.iso_code,
+                timezone=country.timezone,
+                deploy_status=status,
+                can_deploy_now=can_now,
+                window_start=ws,
+                window_end=we,
+                active_promo_count=len(active),
+                ga4_active_users=users,
+                ga4_by_country=ga4_data["by_country"] if ga4_data else {},
+                ga4_top_pages=ga4_data["top_pages"] if ga4_data else [],
+            )
+        )
+
+    weight = {"BLOQUEADO": 0, "RESTRINGIDO": 1, "LIBRE": 2}
+    results.sort(key=lambda r: weight[r.deploy_status])
+
+    now_utc = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+    return PublicStatusOut(generated_at=now_utc, clients=results)
