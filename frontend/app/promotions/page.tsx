@@ -182,7 +182,7 @@ export default function PromotionsPage() {
                   </div>
                   <p className="text-gray-900 dark:text-white text-sm">{p.description ?? <span className="text-gray-400">Sin descripción</span>}</p>
                 </div>
-                {isAdmin && (
+                {canCreate && (
                   <button onClick={() => handleDelete(p.id)}
                     className="text-gray-300 dark:text-gray-600 hover:text-red-500 transition text-xl flex-shrink-0">×</button>
                 )}

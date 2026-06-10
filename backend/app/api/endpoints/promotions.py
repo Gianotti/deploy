@@ -58,7 +58,7 @@ def update_promotion(promotion_id: int, payload: PromotionUpdate, db: Session = 
     return p
 
 
-@router.delete("/{promotion_id}", status_code=204, dependencies=[Depends(require_admin)])
+@router.delete("/{promotion_id}", status_code=204, dependencies=[Depends(require_admin_or_comercial)])
 def delete_promotion(promotion_id: int, db: Session = Depends(get_db)):
     p = db.get(Promotion, promotion_id)
     if not p:
