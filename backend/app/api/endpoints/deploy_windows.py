@@ -10,6 +10,7 @@ from app.models.client import Client
 from app.models.country import Country
 from app.models.deploy_rule import DeployRule
 from app.models.promotion import Promotion
+from app.models.repository import Repository
 from app.rules.engine import compute_windows, can_deploy_now, compute_day_status, _active_promotions_on_date
 from app.schemas.deploy_window import DeployWindowResponse, TodayStatusResponse
 
@@ -32,6 +33,18 @@ def _get_client_and_country(client_id: int, db: Session):
     return client, country
 
 
+def _linked_client_ids(client_id: int, db: Session) -> list[int]:
+    """Returns all client IDs sharing a repository with client_id, including itself."""
+    repos = db.query(Repository).filter(
+        Repository.clients.any(Client.id == client_id)
+    ).all()
+    ids = {client_id}
+    for repo in repos:
+        for c in repo.clients:
+            ids.add(c.id)
+    return list(ids)
+
+
 @router.get("/deploy-windows", response_model=DeployWindowResponse)
 def get_deploy_windows(
     client_id: int = Query(...),
@@ -46,11 +59,12 @@ def get_deploy_windows(
         raise HTTPException(400, "Date range cannot exceed 365 days")
 
     client, country = _get_client_and_country(client_id, db)
+    all_ids = _linked_client_ids(client_id, db)
 
     promotions = (
         db.query(Promotion)
         .filter(
-            Promotion.client_id == client_id,
+            Promotion.client_id.in_(all_ids),
             Promotion.end_date >= from_date,
             Promotion.start_date <= to_date,
         )
@@ -73,6 +87,7 @@ def get_today_status(
     _=Depends(get_current_user),
 ):
     client, country = _get_client_and_country(client_id, db)
+    all_ids = _linked_client_ids(client_id, db)
 
     tz = pytz.timezone(country.timezone)
     today = datetime.now(tz).date()
@@ -80,7 +95,7 @@ def get_today_status(
     promotions = (
         db.query(Promotion)
         .filter(
-            Promotion.client_id == client_id,
+            Promotion.client_id.in_(all_ids),
             Promotion.start_date <= today,
             Promotion.end_date >= today,
         )

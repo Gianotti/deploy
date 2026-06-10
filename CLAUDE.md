@@ -67,10 +67,7 @@ docker-compose down -v
 
 ### API routing (frontend → backend)
 
-All API calls in the browser go through Next.js rewrites:
-`/api/*` → `http://backend:8000/*` (in Docker) or `http://localhost:8000/*` (local dev).
-
-Configured in `frontend/next.config.ts`. The `BACKEND_URL` env var controls the Docker target.
+All API calls go through a catch-all Next.js App Router handler at `frontend/app/api/[...path]/route.ts`. It proxies every method to the backend, manually following FastAPI's trailing-slash 307 redirects (undici can't resend a streamed body on redirect). The `BACKEND_URL` env var controls the target (`http://backend:8000` in Docker, `http://localhost:8000` locally).
 
 ### Rules engine (`backend/app/rules/engine.py`)
 
@@ -78,7 +75,7 @@ This is the core. The engine is **stateless** — it receives lists of `Promotio
 
 Key invariants:
 - `BLOQUEADO > RESTRINGIDO > LIBRE` — the most restrictive status always wins when multiple promotions are active on the same day.
-- Default fallback (no matching rule): `FULL_PROMO` → `BLOQUEADO`, everything else → `LIBRE`.
+- Default fallback (no matching rule): `PROMO_ESPECIAL` → `BLOQUEADO`, `PROMO_NORMAL` → `RESTRINGIDO`.
 - Rules match on `promo_type` AND `promotion.criticality >= rule.min_criticality`. When multiple rules match, the most restrictive one wins.
 - Restricted windows are **intersected** (not unioned) across promos — the tightest common window is used.
 - `can_deploy_now` uses `pytz` to evaluate current local time against the window in the country's timezone.
@@ -86,34 +83,50 @@ Key invariants:
 ### Deploy status flow
 
 ```
-GET /deploy-windows → loads Promotions + DeployRules from DB → engine.compute_windows() → DeployWindowDay[]
-GET /deploy-status/today → same, but single day + adds can_deploy_now boolean
+GET /deploy-windows        → loads Promotions + DeployRules from DB → engine.compute_windows() → DeployWindowDay[]
+GET /deploy-status/today   → same, but single day + adds can_deploy_now boolean
+GET /public/status         → all clients, no auth required; merges GA4 realtime + in-memory tracker for active users
 ```
+
+### Scheduler (APScheduler)
+
+`backend/app/scheduler.py` runs a `BackgroundScheduler` (UTC) that sends Google Chat webhook notifications at up to 3 configurable daily times. Jobs are rebuilt whenever `NotificationConfig` is updated via `POST /notifications/config` and are restored from DB on startup (`lifespan` in `main.py`).
+
+### GA4 integration
+
+GA4 service account credentials are stored as JSON in the `integration_configs` table under key `ga4_service_account`. Clients can have a `ga4_property_id`; `GET /ga4/realtime` fetches active users for all configured clients in parallel (up to 8 threads). The public status endpoint uses GA4 data when available, with a fallback to the in-memory GTM tracker (`services/tracker.py`) which counts page view events in a 5-minute sliding window.
 
 ### Auth
 
-Backend: Two roles: `admin` (CRUD everything) and `reader` (GET only). JWT payload carries `sub` (user id) and `role`.
+Three roles: `admin` (CRUD everything), `reader` (GET only), `comercial` (can create/delete promotions). JWT payload carries `sub` (user id) and `role`. Dependency functions in `api/deps.py`: `get_current_user`, `require_admin`, `require_admin_or_comercial`.
 
-Frontend: JWT stored in a cookie (`access_token`, 1-day expiry) via `js-cookie`. `AuthProvider` (`lib/auth.tsx`) provides `useAuth()` hook throughout the app. `AuthGuard` component wraps each protected page and redirects to `/login` if not authenticated.
+Frontend: JWT stored in a cookie (`access_token`, 1-day expiry) via `js-cookie`. `AuthProvider` (`lib/auth.tsx`) provides `useAuth()` hook throughout the app. `AuthGuard` component wraps each protected page and redirects to `/login` if not authenticated. On 401 response the axios interceptor in `lib/api.ts` clears the cookie and redirects to `/login`.
 
 ### Frontend pages
 
-| Route | Component | Description |
-|---|---|---|
-| `/` | Redirects → `/dashboard` | |
-| `/login` | Login form | JWT login |
-| `/dashboard` | HomeScreen | Semáforo, "¿puedo deployar ahora?" |
-| `/calendar` | Calendar + detail panel | Month grid with color-coded days |
-| `/promotions` | List + create form | CRUD promos (create/delete for admins only) |
+| Route | Description |
+|---|---|
+| `/dashboard` | Semáforo per-client: "¿puedo deployar ahora?" |
+| `/calendar` | Month grid with color-coded days + detail panel |
+| `/promotions` | List + create form (create/delete for admin + comercial) |
+| `/admin` | Tabbed admin panel: Countries, Clients, Deploy Rules, Notifications (Google Chat), GA4, Repositories |
+| `/landing` | Public-facing status page (no login required) |
 
 ### Data model relationships
 
 ```
 Country → Client → Promotion
 DeployRule (global, not per-client) × Promotion → DeployWindowDay (computed, never stored)
+Repository ←→ Client (many-to-many via client_repositories)
+IntegrationConfig (key/value store) — holds GA4 service account JSON
+NotificationConfig (singleton row) — Google Chat webhook + up to 3 daily notification times
 ```
 
 `DeployRule` rows are global. To change behavior for a specific promo type/criticality, add/edit a `DeployRule` row — no code change needed.
+
+### Repository linking
+
+Clients that share a repository are linked via the `Repository` model (`/admin` → Repositorios tab). When computing deploy windows or today's status for a client, the engine collects promotions from **all clients sharing the same repository** and returns the most restrictive result. This covers `GET /deploy-windows`, `GET /deploy-status/today`, `GET /public/status`, and Google Chat notifications.
 
 ## Seed credentials
 

@@ -10,6 +10,7 @@ from app.models.deploy_rule import DeployStatus
 from app.rules.engine import _active_promotions_on_date, compute_day_status
 from app.models.promotion import Promotion
 from app.models.deploy_rule import DeployRule
+from app.models.repository import Repository
 
 
 STATUS_EMOJI = {
@@ -63,6 +64,17 @@ def send_to_webhook(webhook_url: str, message: str) -> bool:
         return False
 
 
+def _linked_client_ids(client_id: int, db) -> list[int]:
+    repos = db.query(Repository).filter(
+        Repository.clients.any(id=client_id)
+    ).all()
+    ids = {client_id}
+    for repo in repos:
+        for c in repo.clients:
+            ids.add(c.id)
+    return list(ids)
+
+
 def collect_client_statuses(db) -> list:
     """Recorre todos los clientes y calcula su estado de deploy para hoy."""
     from app.models.client import Client
@@ -76,11 +88,12 @@ def collect_client_statuses(db) -> list:
         country = db.get(Country, client.country_id)
         tz = pytz.timezone(country.timezone)
         today = datetime.now(tz).date()
+        linked_ids = _linked_client_ids(client.id, db)
 
         promotions = (
             db.query(Promotion)
             .filter(
-                Promotion.client_id == client.id,
+                Promotion.client_id.in_(linked_ids),
                 Promotion.start_date <= today,
                 Promotion.end_date >= today,
             )

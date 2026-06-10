@@ -15,6 +15,7 @@ import type {
   DeployStatus,
   DeployWindowResponse,
   Promotion,
+  Repository,
   TodayStatusResponse,
   User,
 } from "@/types";
@@ -231,4 +232,26 @@ export async function getGA4Realtime(): Promise<GA4RealtimeData[]> {
 
 export async function updateClientGA4(id: number, ga4_property_id: string | null): Promise<Client> {
   return (await api.patch<Client>(`/clients/${id}`, { ga4_property_id })).data;
+}
+
+// ── Repositories ─────────────────────────────────────────────────────────────
+
+export async function getRepositories(): Promise<Repository[]> {
+  return (await api.get<Repository[]>("/repositories/")).data;
+}
+
+export async function createRepository(name: string): Promise<Repository> {
+  return (await api.post<Repository>("/repositories/", { name })).data;
+}
+
+export async function deleteRepository(id: number): Promise<void> {
+  await api.delete(`/repositories/${id}`);
+}
+
+export async function addClientToRepository(repoId: number, clientId: number): Promise<Repository> {
+  return (await api.post<Repository>(`/repositories/${repoId}/clients`, { client_id: clientId })).data;
+}
+
+export async function removeClientFromRepository(repoId: number, clientId: number): Promise<Repository> {
+  return (await api.delete<Repository>(`/repositories/${repoId}/clients/${clientId}`)).data;
 }

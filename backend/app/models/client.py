@@ -14,3 +14,4 @@ class Client(Base):
 
     country = relationship("Country", back_populates="clients")
     promotions = relationship("Promotion", back_populates="client")
+    repositories = relationship("Repository", secondary="client_repositories", back_populates="clients")

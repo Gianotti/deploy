@@ -9,12 +9,13 @@ import {
   getDeployRules, createDeployRule, deleteDeployRule,
   getNotificationConfig, saveNotificationConfig, sendNotificationNow,
   getGA4CredentialsStatus, saveGA4Credentials, deleteGA4Credentials, getGA4Realtime,
+  getRepositories, createRepository, deleteRepository, addClientToRepository, removeClientFromRepository,
   extractError,
   type NotificationConfig, type GA4RealtimeData, type GA4CredentialsStatus,
 } from "@/lib/api";
-import type { Country, Client, DeployRule, PromoType, DeployStatus } from "@/types";
+import type { Country, Client, DeployRule, PromoType, DeployStatus, Repository } from "@/types";
 
-type Tab = "countries" | "clients" | "rules" | "notifications" | "ga4";
+type Tab = "countries" | "clients" | "rules" | "notifications" | "ga4" | "repositories";
 
 const PROMO_TYPES: PromoType[] = ["PROMO_ESPECIAL", "PROMO_NORMAL"];
 const DEPLOY_STATUSES: DeployStatus[] = ["LIBRE", "RESTRINGIDO", "BLOQUEADO"];
@@ -667,6 +668,116 @@ function GA4Tab() {
   );
 }
 
+// ─── Repositories ─────────────────────────────────────────────────────────────
+
+function RepositoriesTab() {
+  const [repos, setRepos] = useState<Repository[]>([]);
+  const [clients, setClients] = useState<Client[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [newName, setNewName] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [addingClient, setAddingClient] = useState<Record<number, string>>({});
+
+  async function load() {
+    setLoading(true);
+    try {
+      const [rs, cs] = await Promise.all([getRepositories(), getClients()]);
+      setRepos(rs); setClients(cs);
+    } finally { setLoading(false); }
+  }
+  useEffect(() => { load(); }, []);
+
+  async function handleCreate(e: React.FormEvent) {
+    e.preventDefault(); setError(""); setSaving(true);
+    try { await createRepository(newName); setNewName(""); load(); }
+    catch (err: any) { setError(extractError(err)); }
+    finally { setSaving(false); }
+  }
+
+  async function handleDelete(id: number, name: string) {
+    if (!confirm(`¿Eliminar repositorio "${name}"?`)) return;
+    try { await deleteRepository(id); load(); }
+    catch (err: any) { alert(extractError(err)); }
+  }
+
+  async function handleAddClient(repoId: number) {
+    const clientId = Number(addingClient[repoId]);
+    if (!clientId) return;
+    try { await addClientToRepository(repoId, clientId); setAddingClient(a => ({ ...a, [repoId]: "" })); load(); }
+    catch (err: any) { alert(extractError(err)); }
+  }
+
+  async function handleRemoveClient(repoId: number, clientId: number, clientName: string) {
+    if (!confirm(`¿Desvincular "${clientName}" de este repositorio?`)) return;
+    try { await removeClientFromRepository(repoId, clientId); load(); }
+    catch (err: any) { alert(extractError(err)); }
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="bg-blue-50 dark:bg-navy-700/50 border border-blue-200 dark:border-navy-700 rounded-xl px-4 py-3 text-sm text-blue-700 dark:text-gray-400">
+        Los clientes que comparten repositorio heredan el status más restrictivo entre todos. Si uno tiene una promo activa, los demás también quedan bloqueados/restringidos.
+      </div>
+
+      <form onSubmit={handleCreate} className="card p-6 space-y-4">
+        <h2 className="font-semibold text-gray-900 dark:text-white">Nuevo repositorio</h2>
+        <div className="flex gap-3">
+          <input className="field flex-1" required placeholder="mi-repo / monorepo-banco" value={newName}
+            onChange={e => setNewName(e.target.value)} />
+          <button type="submit" disabled={saving} className="btn-primary flex-shrink-0">
+            {saving ? "Guardando..." : "+ Crear"}
+          </button>
+        </div>
+        {error && <p className="text-red-500 text-sm">{error}</p>}
+      </form>
+
+      <div className="space-y-4">
+        {loading && <p className="text-gray-400 text-sm">Cargando...</p>}
+        {repos.map(repo => {
+          const linkedIds = new Set(repo.clients.map(c => c.id));
+          const available = clients.filter(c => !linkedIds.has(c.id));
+          return (
+            <div key={repo.id} className="card p-5 space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="font-semibold text-gray-900 dark:text-white font-mono">{repo.name}</h3>
+                <button onClick={() => handleDelete(repo.id, repo.name)}
+                  className="text-gray-300 dark:text-gray-600 hover:text-red-500 transition text-xl px-2">×</button>
+              </div>
+
+              {repo.clients.length > 0 ? (
+                <div className="flex flex-wrap gap-2">
+                  {repo.clients.map(c => (
+                    <span key={c.id} className="flex items-center gap-1.5 bg-gray-100 dark:bg-navy-700 text-gray-800 dark:text-gray-200 text-sm px-3 py-1 rounded-full">
+                      {c.name}
+                      <button onClick={() => handleRemoveClient(repo.id, c.id, c.name)}
+                        className="text-gray-400 hover:text-red-500 transition leading-none">×</button>
+                    </span>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-gray-400 text-sm italic">Sin clientes vinculados</p>
+              )}
+
+              {available.length > 0 && (
+                <div className="flex gap-2">
+                  <select className="field flex-1" value={addingClient[repo.id] ?? ""}
+                    onChange={e => setAddingClient(a => ({ ...a, [repo.id]: e.target.value }))}>
+                    <option value="">Agregar cliente...</option>
+                    {available.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                  <button onClick={() => handleAddClient(repo.id)} disabled={!addingClient[repo.id]}
+                    className="btn-primary flex-shrink-0 disabled:opacity-50">Vincular</button>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 const TABS: { id: Tab; label: string }[] = [
@@ -675,6 +786,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "rules",         label: "⚙️ Reglas" },
   { id: "notifications", label: "💬 Notificaciones" },
   { id: "ga4",           label: "📊 GA4" },
+  { id: "repositories",  label: "🗂 Repositorios" },
 ];
 
 export default function AdminPage() {
@@ -712,6 +824,7 @@ export default function AdminPage() {
         {tab === "rules"         && <RulesTab />}
         {tab === "notifications" && <NotificationsTab />}
         {tab === "ga4"           && <GA4Tab />}
+        {tab === "repositories"  && <RepositoriesTab />}
       </div>
     </AuthGuard>
   );

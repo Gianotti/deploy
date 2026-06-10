@@ -1,5 +1,16 @@
 export type UserRole = "admin" | "reader" | "comercial";
 
+export interface ClientSummary {
+  id: number;
+  name: string;
+}
+
+export interface Repository {
+  id: number;
+  name: string;
+  clients: ClientSummary[];
+}
+
 export interface User {
   id: number;
   email: string;

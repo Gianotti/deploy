@@ -13,10 +13,22 @@ from app.models.country import Country
 from app.models.deploy_rule import DeployRule, DeployStatus
 from app.models.integration_config import IntegrationConfig
 from app.models.promotion import Promotion
+from app.models.repository import Repository
 from app.rules.engine import _active_promotions_on_date, can_deploy_now, compute_day_status
 from app.services import tracker
 
 router = APIRouter(prefix="/public", tags=["public"])
+
+
+def _linked_client_ids(client_id: int, db) -> list[int]:
+    repos = db.query(Repository).filter(
+        Repository.clients.any(Client.id == client_id)
+    ).all()
+    ids = {client_id}
+    for repo in repos:
+        for c in repo.clients:
+            ids.add(c.id)
+    return list(ids)
 
 GA4_CREDS_KEY = "ga4_service_account"
 
@@ -81,10 +93,11 @@ def public_status(db: Session = Depends(get_db)):
         tz = pytz.timezone(country.timezone)
         today = datetime.now(tz).date()
 
+        linked_ids = _linked_client_ids(client.id, db)
         promotions = (
             db.query(Promotion)
             .filter(
-                Promotion.client_id == client.id,
+                Promotion.client_id.in_(linked_ids),
                 Promotion.start_date <= today,
                 Promotion.end_date >= today,
             )
