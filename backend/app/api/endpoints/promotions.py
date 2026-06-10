@@ -3,7 +3,7 @@ from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, require_admin
+from app.api.deps import get_current_user, require_admin, require_admin_or_comercial
 from app.db.base import get_db
 from app.models.promotion import Promotion
 from app.schemas.promotion import PromotionCreate, PromotionOut, PromotionUpdate
@@ -37,7 +37,7 @@ def get_promotion(promotion_id: int, db: Session = Depends(get_db), _=Depends(ge
     return p
 
 
-@router.post("/", response_model=PromotionOut, dependencies=[Depends(require_admin)])
+@router.post("/", response_model=PromotionOut, dependencies=[Depends(require_admin_or_comercial)])
 def create_promotion(payload: PromotionCreate, db: Session = Depends(get_db)):
     promo = Promotion(**payload.model_dump())
     db.add(promo)

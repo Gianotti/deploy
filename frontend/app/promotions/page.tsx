@@ -24,6 +24,7 @@ const EMPTY_FORM = { start_date: "", end_date: "", promo_type: "PROMO_NORMAL" as
 export default function PromotionsPage() {
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
+  const canCreate = user?.role === "admin" || user?.role === "comercial";
 
   const [client, setClient] = useState<Client | null>(null);
   const [promos, setPromos] = useState<Promotion[]>([]);
@@ -68,7 +69,7 @@ export default function PromotionsPage() {
             <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-1">Promociones</h1>
             <p className="text-gray-500 dark:text-gray-400 text-sm">Gestioná las promos por cliente</p>
           </div>
-          {isAdmin && client && (
+          {canCreate && client && (
             <button onClick={() => setShowForm((v) => !v)} className="btn-primary">
               {showForm ? "Cancelar" : "+ Nueva promo"}
             </button>
@@ -78,7 +79,7 @@ export default function PromotionsPage() {
         <ClientSelector value={client} onChange={handleClientChange} />
 
         {/* Create form */}
-        {showForm && isAdmin && client && (
+        {showForm && canCreate && client && (
           <form onSubmit={handleSubmit} className="card p-6 space-y-5">
             <h2 className="font-semibold text-gray-900 dark:text-white">Nueva promoción — {client.name}</h2>
 
