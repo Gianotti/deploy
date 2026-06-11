@@ -17,13 +17,20 @@ import app.models  # noqa
 
 
 def _apply_migrations(engine):
-    from sqlalchemy import text, inspect
+    from sqlalchemy import text
     with engine.connect() as conn:
-        inspector = inspect(engine)
-        cols = [c["name"] for c in inspector.get_columns("clients")]
-        if "ga4_property_id" not in cols:
-            conn.execute(text("ALTER TABLE clients ADD COLUMN ga4_property_id VARCHAR"))
-            conn.commit()
+        result = conn.execute(text(
+            "SELECT column_name FROM information_schema.columns WHERE table_name = 'clients'"
+        ))
+        cols = {r[0] for r in result}
+        for col, ddl in [
+            ("ga4_property_id", "ALTER TABLE clients ADD COLUMN ga4_property_id VARCHAR"),
+            ("logo_data",       "ALTER TABLE clients ADD COLUMN logo_data BYTEA"),
+            ("logo_filename",   "ALTER TABLE clients ADD COLUMN logo_filename VARCHAR"),
+        ]:
+            if col not in cols:
+                conn.execute(text(ddl))
+        conn.commit()
     # ALTER TYPE must run outside a transaction block
     with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as ac:
         result = ac.execute(text("SELECT unnest(enum_range(NULL::userrole))::text")).fetchall()

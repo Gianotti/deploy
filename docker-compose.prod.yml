@@ -32,7 +32,7 @@ services:
     ports:
       - "${BACKEND_PORT:-8040}:8000"
     command: >
-      sh -c "python -m app.db.seed && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+      sh -c "python -c 'import os,psycopg2;c=psycopg2.connect(os.environ[\"DATABASE_URL\"]);x=c.cursor();[x.execute(f\"ALTER TABLE clients ADD COLUMN IF NOT EXISTS {n} {t}\") for n,t in [(\"logo_data\",\"BYTEA\"),(\"logo_filename\",\"VARCHAR\")]];c.commit();c.close();print(\"columns patched\")' 2>/dev/null; python -m app.db.init_db && python -m app.db.seed && uvicorn app.main:app --host 0.0.0.0 --port 8000"
 
   frontend:
     build: ./frontend
