@@ -130,12 +130,18 @@ export default function LandingPage() {
   const [countdown, setCountdown] = useState(REFRESH_SECS);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  const [ecosystemTotal, setEcosystemTotal] = useState(0);
+  const [ecosystemPeak, setEcosystemPeak] = useState(0);
 
   const fetchStatus = useCallback(async () => {
     setError(false);
     try {
       const data = await getPublicStatus();
-      setClients(data.clients); setGeneratedAt(data.generated_at); setCountdown(REFRESH_SECS);
+      setClients(data.clients);
+      setGeneratedAt(data.generated_at);
+      setEcosystemTotal(data.ecosystem_total ?? 0);
+      setEcosystemPeak(data.ecosystem_peak_today ?? 0);
+      setCountdown(REFRESH_SECS);
     } catch { setError(true); }
     finally { setLoading(false); }
   }, []);
@@ -197,6 +203,7 @@ export default function LandingPage() {
 
         {!loading && !error && clients.length > 0 && (
           <div className="space-y-8">
+            <EcosystemBox total={ecosystemTotal} peak={ecosystemPeak} clientCount={clients.length} />
             <div className="flex gap-4 flex-wrap">
               <Chip count={bloqueado.length}   label="Bloqueados" color="text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/30 border-red-200 dark:border-red-800" />
               <Chip count={restringido.length} label="Con aviso"  color="text-yellow-600 dark:text-yellow-400 bg-yellow-50 dark:bg-yellow-900/30 border-yellow-200 dark:border-yellow-800" />
@@ -210,6 +217,54 @@ export default function LandingPage() {
 
         {!loading && !error && <HowItWorks />}
       </main>
+    </div>
+  );
+}
+
+function EcosystemBox({ total, peak, clientCount }: { total: number; peak: number; clientCount: number }) {
+  return (
+    <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-indigo-600 via-blue-600 to-cyan-600 p-px shadow-xl">
+      <div className="rounded-2xl bg-gray-900/90 dark:bg-navy-900/95 px-6 py-5 sm:px-8 sm:py-6">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-6">
+
+          {/* Label */}
+          <div>
+            <div className="flex items-center gap-2 mb-1">
+              <span className="relative flex h-2.5 w-2.5">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75" />
+                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-cyan-400" />
+              </span>
+              <span className="text-xs font-semibold text-cyan-400 uppercase tracking-widest">En vivo</span>
+            </div>
+            <h2 className="text-white font-black text-xl sm:text-2xl leading-tight">
+              Ecosistema Avenida+
+            </h2>
+            <p className="text-gray-400 text-sm mt-0.5">{clientCount} clientes monitoreados</p>
+          </div>
+
+          {/* Stats */}
+          <div className="flex items-stretch gap-4 sm:gap-8">
+            <div className="text-center">
+              <p className="text-gray-400 text-xs uppercase tracking-wide mb-1">Usuarios online ahora</p>
+              <p className="text-white font-black text-4xl sm:text-5xl leading-none tabular-nums">
+                {total.toLocaleString("es-AR")}
+              </p>
+              <p className="text-cyan-400 text-xs mt-1.5">👥 activos</p>
+            </div>
+
+            <div className="w-px bg-white/10 self-stretch" />
+
+            <div className="text-center">
+              <p className="text-gray-400 text-xs uppercase tracking-wide mb-1">Pico máximo hoy</p>
+              <p className="text-white font-black text-4xl sm:text-5xl leading-none tabular-nums">
+                {peak.toLocaleString("es-AR")}
+              </p>
+              <p className="text-indigo-300 text-xs mt-1.5">📈 usuarios</p>
+            </div>
+          </div>
+
+        </div>
+      </div>
     </div>
   );
 }

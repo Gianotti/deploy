@@ -54,6 +54,8 @@ class ClientStatusOut(BaseModel):
 class PublicStatusOut(BaseModel):
     generated_at: str
     clients: List[ClientStatusOut]
+    ecosystem_total: int = 0
+    ecosystem_peak_today: int = 0
 
 
 def _fetch_ga4_for_client(creds: str, client_id: int, property_id: str) -> tuple[int, dict | None]:
@@ -136,8 +138,16 @@ def public_status(db: Session = Depends(get_db)):
     weight = {"BLOQUEADO": 0, "RESTRINGIDO": 1, "LIBRE": 2}
     results.sort(key=lambda r: weight[r.deploy_status])
 
+    ecosystem_total = sum(r.ga4_active_users for r in results if r.ga4_active_users is not None)
+    tracker.update_ecosystem_peak(ecosystem_total)
+
     now_utc = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
-    return PublicStatusOut(generated_at=now_utc, clients=results)
+    return PublicStatusOut(
+        generated_at=now_utc,
+        clients=results,
+        ecosystem_total=ecosystem_total,
+        ecosystem_peak_today=tracker.get_ecosystem_peak(),
+    )
 
 
 @router.get("/team-gif/{slot_id}")

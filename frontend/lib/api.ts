@@ -176,6 +176,8 @@ export interface ClientStatus {
 export interface PublicStatus {
   generated_at: string;
   clients: ClientStatus[];
+  ecosystem_total: number;
+  ecosystem_peak_today: number;
 }
 
 export async function getPublicStatus(): Promise<PublicStatus> {
