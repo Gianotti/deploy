@@ -75,16 +75,18 @@ def init() -> None:
 
     elif not has_alembic:
         # ── Case 2: existing DB, never tracked by alembic ─────────────────────
-        # create_all handles any missing tables; patch handles missing columns
         Base.metadata.create_all(bind=engine)
-        _patch_missing_columns()
         command.stamp(cfg, "head")
-        print("✅ DB existente sin rastreo: esquema actualizado + alembic stamped at head.")
+        print("✅ DB existente sin rastreo: alembic stamped at head.")
 
     else:
         # ── Case 3: alembic already tracking ─────────────────────────────────
         command.upgrade(cfg, "head")
         print("✅ DB existente: alembic upgrade head completado.")
+
+    # Always patch columns that may be missing regardless of alembic state.
+    # Safe to run every startup — checks existence before each ALTER.
+    _patch_missing_columns()
 
 
 if __name__ == "__main__":
