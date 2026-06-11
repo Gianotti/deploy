@@ -207,8 +207,156 @@ export default function LandingPage() {
             </div>
           </div>
         )}
+
+        {!loading && !error && <HowItWorks />}
       </main>
     </div>
+  );
+}
+
+const STEPS = [
+  {
+    icon: "📅",
+    title: "Se registra una promoción",
+    desc: "El equipo comercial carga al calendario las fechas de campañas, descuentos o eventos que van a generar tráfico alto.",
+  },
+  {
+    icon: "⚙️",
+    title: "El sistema evalúa el día",
+    desc: "Automáticamente se analiza si hoy hay alguna promoción activa y qué tan crítica es para los usuarios.",
+  },
+  {
+    icon: "🚦",
+    title: "Se determina el semáforo",
+    desc: "En base a las reglas del negocio, el día queda marcado como libre, con aviso o bloqueado para cada cliente.",
+  },
+  {
+    icon: "📣",
+    title: "El equipo actúa en consecuencia",
+    desc: "Desarrollo revisa este panel antes de cada deploy para saber si puede avanzar, avisar o esperar.",
+  },
+];
+
+const OUTCOMES = [
+  {
+    icon: "✅",
+    status: "LIBRE",
+    label: "Podés deployar",
+    bg: "bg-green-50 dark:bg-green-900/20",
+    border: "border-green-300 dark:border-green-700",
+    badge: "bg-green-500",
+    badgeText: "text-green-700 dark:text-green-300",
+    title: "Sin restricciones",
+    bullets: [
+      "No hay promociones activas hoy",
+      "Podés hacer el deploy en cualquier momento",
+      "No hace falta avisar a nadie",
+    ],
+  },
+  {
+    icon: "⚠️",
+    status: "CON AVISO",
+    label: "Deploy posible, pero avisá",
+    bg: "bg-yellow-50 dark:bg-yellow-900/20",
+    border: "border-yellow-300 dark:border-yellow-700",
+    badge: "bg-yellow-400",
+    badgeText: "text-yellow-700 dark:text-yellow-300",
+    title: "Hay una promo activa",
+    bullets: [
+      "Existe una campaña en curso de baja criticidad",
+      "Avisá al equipo comercial antes de deployar",
+      "Respetá la ventana horaria indicada si la hay",
+      "Cualquier incidente en prod afecta la campaña",
+    ],
+  },
+  {
+    icon: "🚫",
+    status: "BLOQUEADO",
+    label: "No deployar",
+    bg: "bg-red-50 dark:bg-red-900/20",
+    border: "border-red-300 dark:border-red-700",
+    badge: "bg-red-500",
+    badgeText: "text-red-700 dark:text-red-300",
+    title: "Promo crítica en curso",
+    bullets: [
+      "Hay una campaña de alto impacto activa",
+      "Un deploy podría interrumpir comunicaciones o pagos",
+      "Esperá a que finalice la promoción",
+      "Ante urgencia crítica, coordinar con comercial y legales",
+    ],
+  },
+];
+
+function HowItWorks() {
+  return (
+    <section className="mt-16 pb-12 space-y-12">
+
+      {/* Divider */}
+      <div className="flex items-center gap-4">
+        <div className="flex-1 h-px bg-gray-200 dark:bg-navy-700" />
+        <span className="text-gray-400 dark:text-gray-500 text-sm font-medium whitespace-nowrap">¿Cómo funciona el semáforo?</span>
+        <div className="flex-1 h-px bg-gray-200 dark:bg-navy-700" />
+      </div>
+
+      {/* Steps */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-0">
+        {STEPS.map((step, i) => (
+          <div key={i} className="relative flex lg:flex-col items-start lg:items-center gap-4 lg:gap-3 lg:text-center px-6 py-5">
+            {/* Connector line between steps */}
+            {i < STEPS.length - 1 && (
+              <div className="hidden lg:block absolute top-8 left-[calc(50%+2rem)] right-0 h-px border-t-2 border-dashed border-gray-200 dark:border-navy-700 z-0" />
+            )}
+            <div className="relative z-10 w-16 h-16 rounded-2xl bg-white dark:bg-navy-800 border-2 border-gray-200 dark:border-navy-700 flex items-center justify-center text-3xl flex-shrink-0 shadow-sm">
+              {step.icon}
+              <span className="absolute -top-2 -left-2 w-6 h-6 rounded-full bg-gray-800 dark:bg-gray-200 text-white dark:text-gray-900 text-xs font-black flex items-center justify-center">
+                {i + 1}
+              </span>
+            </div>
+            <div>
+              <p className="font-bold text-gray-900 dark:text-white text-sm">{step.title}</p>
+              <p className="text-gray-500 dark:text-gray-400 text-xs mt-1 leading-relaxed">{step.desc}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Divider */}
+      <div className="flex items-center gap-4">
+        <div className="flex-1 h-px bg-gray-200 dark:bg-navy-700" />
+        <span className="text-gray-400 dark:text-gray-500 text-sm font-medium whitespace-nowrap">¿Qué significa cada estado?</span>
+        <div className="flex-1 h-px bg-gray-200 dark:bg-navy-700" />
+      </div>
+
+      {/* Outcome cards */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+        {OUTCOMES.map((o) => (
+          <div key={o.status} className={`${o.bg} border-2 ${o.border} rounded-2xl p-6 space-y-4`}>
+            <div className="flex items-center gap-3">
+              <div className={`w-12 h-12 rounded-xl ${o.badge} flex items-center justify-center text-2xl flex-shrink-0`}>
+                {o.icon}
+              </div>
+              <div>
+                <p className={`font-black text-sm uppercase tracking-wide ${o.badgeText}`}>{o.status}</p>
+                <p className="text-gray-700 dark:text-gray-300 font-semibold text-sm">{o.title}</p>
+              </div>
+            </div>
+            <ul className="space-y-2">
+              {o.bullets.map((b, i) => (
+                <li key={i} className="flex items-start gap-2 text-sm text-gray-600 dark:text-gray-400">
+                  <span className="mt-0.5 text-xs">•</span>
+                  <span>{b}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      </div>
+
+      {/* Footer note */}
+      <p className="text-center text-xs text-gray-400 dark:text-gray-600">
+        Este semáforo se actualiza automáticamente cada minuto · El estado refleja el día de hoy en el timezone de cada cliente
+      </p>
+    </section>
   );
 }
 
