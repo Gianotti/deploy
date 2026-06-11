@@ -50,11 +50,11 @@ def rebuild_notification_jobs(time_1: str | None, time_2: str | None, time_3: st
 
 # ── Team notifications ─────────────────────────────────────────────────────────
 
-def _team_notify_job(team_id: int, slot_number: int):
+def _team_notify_job(team_id: int, slot_id: int):
     """Envía el mensaje del slot al equipo si hoy es día de deploy."""
-    import requests
     from app.db.base import SessionLocal
-    from app.models.team import Team
+    from app.models.team import Team, TeamNotificationSlot
+    from app.services.team_notify import send_slot
 
     db = SessionLocal()
     try:
@@ -66,25 +66,25 @@ def _team_notify_job(team_id: int, slot_number: int):
         if team.deploy_days and datetime.utcnow().weekday() not in team.deploy_days:
             return
 
-        slot = next((s for s in team.slots if s.slot_number == slot_number), None)
-        if not slot or not slot.message:
+        slot = db.get(TeamNotificationSlot, slot_id)
+        if not slot or slot.team_id != team_id:
+            return
+        if not slot.message_ok and not slot.message_blocked:
             return
 
-        for channel in team.channels:
-            try:
-                requests.post(channel.webhook_url, json={"text": slot.message}, timeout=10)
-            except Exception as e:
-                print(f"[Team {team.name} / {channel.label}] Error webhook: {e}")
+        errors = send_slot(team, slot)
+        for err in errors:
+            print(f"[Team {team.name}] {err}")
     finally:
         db.close()
 
 
 def rebuild_team_jobs(team_id: int, slots, channels, deploy_days):
     """Elimina y recrea los jobs del scheduler para un equipo."""
-    for n in (1, 2, 3):
-        jid = f"team_{team_id}_slot_{n}"
-        if scheduler.get_job(jid):
-            scheduler.remove_job(jid)
+    # Remove all existing jobs for this team
+    for job in scheduler.get_jobs():
+        if job.id.startswith(f"team_{team_id}_slot_"):
+            scheduler.remove_job(job.id)
 
     if not channels:
         return
@@ -96,18 +96,17 @@ def rebuild_team_jobs(team_id: int, slots, channels, deploy_days):
         scheduler.add_job(
             _team_notify_job,
             CronTrigger(hour=hour, minute=minute, timezone="UTC"),
-            id=f"team_{team_id}_slot_{slot.slot_number}",
-            args=[team_id, slot.slot_number],
+            id=f"team_{team_id}_slot_{slot.id}",
+            args=[team_id, slot.id],
             replace_existing=True,
             max_instances=1,
         )
 
 
 def remove_team_jobs(team_id: int):
-    for n in (1, 2, 3):
-        jid = f"team_{team_id}_slot_{n}"
-        if scheduler.get_job(jid):
-            scheduler.remove_job(jid)
+    for job in scheduler.get_jobs():
+        if job.id.startswith(f"team_{team_id}_slot_"):
+            scheduler.remove_job(job.id)
 
 
 def rebuild_all_team_jobs():

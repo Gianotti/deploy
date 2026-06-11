@@ -12,19 +12,34 @@ class TeamChannelOut(TeamChannelIn):
 
 
 class TeamNotificationSlotIn(BaseModel):
-    slot_number: int   # 1, 2, or 3
+    sort_order: int = 0
     time: str | None = None
-    message: str | None = None
+    message_ok: str | None = None
+    message_blocked: str | None = None
 
 
 class TeamNotificationSlotOut(TeamNotificationSlotIn):
     id: int
+    has_gif: bool = False
+    gif_filename: str | None = None
     model_config = {"from_attributes": True}
+
+    @classmethod
+    def from_orm_slot(cls, slot) -> "TeamNotificationSlotOut":
+        return cls(
+            id=slot.id,
+            sort_order=slot.sort_order,
+            time=slot.time,
+            message_ok=slot.message_ok,
+            message_blocked=slot.message_blocked,
+            has_gif=slot.gif_data is not None,
+            gif_filename=slot.gif_filename,
+        )
 
 
 class TeamCreate(BaseModel):
     name: str
-    deploy_days: list[int] = []   # 0=Mon … 6=Sun
+    deploy_days: list[int] = []
 
 
 class TeamUpdate(BaseModel):

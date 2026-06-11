@@ -3,7 +3,8 @@ from datetime import datetime
 from typing import List
 
 import pytz
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -135,3 +136,23 @@ def public_status(db: Session = Depends(get_db)):
 
     now_utc = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
     return PublicStatusOut(generated_at=now_utc, clients=results)
+
+
+@router.get("/team-gif/{slot_id}")
+def get_team_gif(slot_id: int, db: Session = Depends(get_db)):
+    """Sirve el GIF/imagen de un slot de notificación de equipo (sin autenticación)."""
+    from app.models.team import TeamNotificationSlot
+    slot = db.get(TeamNotificationSlot, slot_id)
+    if not slot or not slot.gif_data:
+        raise HTTPException(404, "GIF no encontrado")
+    # Detect content type from filename extension
+    fname = (slot.gif_filename or "").lower()
+    if fname.endswith(".gif"):
+        media_type = "image/gif"
+    elif fname.endswith(".png"):
+        media_type = "image/png"
+    elif fname.endswith(".webp"):
+        media_type = "image/webp"
+    else:
+        media_type = "image/jpeg"
+    return Response(content=slot.gif_data, media_type=media_type)

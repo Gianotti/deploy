@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, ForeignKey
+from sqlalchemy import Column, Integer, String, ForeignKey, LargeBinary
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import relationship
 
@@ -18,7 +18,7 @@ class Team(Base):
         "TeamNotificationSlot",
         back_populates="team",
         cascade="all, delete-orphan",
-        order_by="TeamNotificationSlot.slot_number",
+        order_by="TeamNotificationSlot.sort_order",
     )
 
 
@@ -38,8 +38,11 @@ class TeamNotificationSlot(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     team_id = Column(Integer, ForeignKey("teams.id", ondelete="CASCADE"), nullable=False)
-    slot_number = Column(Integer, nullable=False)  # 1, 2, 3
-    time = Column(String(5), nullable=True)         # "HH:MM" UTC
-    message = Column(String, nullable=True)
+    sort_order = Column(Integer, nullable=False, default=0)
+    time = Column(String(5), nullable=True)           # "HH:MM" UTC
+    message_ok = Column(String, nullable=True)        # mensaje cuando deploy está LIBRE
+    message_blocked = Column(String, nullable=True)   # mensaje cuando hay promo activa
+    gif_data = Column(LargeBinary, nullable=True)
+    gif_filename = Column(String, nullable=True)
 
     team = relationship("Team", back_populates="slots")

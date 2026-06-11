@@ -10,7 +10,9 @@ import {
   getNotificationConfig, saveNotificationConfig, sendNotificationNow,
   getGA4CredentialsStatus, saveGA4Credentials, deleteGA4Credentials, getGA4Realtime,
   getRepositories, createRepository, deleteRepository, addClientToRepository, removeClientFromRepository,
-  getTeams, createTeam, updateTeam, deleteTeam, addTeamChannel, removeTeamChannel, upsertTeamSlots, testTeamNotify,
+  getTeams, createTeam, updateTeam, deleteTeam, addTeamChannel, removeTeamChannel,
+  addTeamSlot, updateTeamSlot, deleteTeamSlot,
+  uploadTeamSlotGif, deleteTeamSlotGif, testTeamNotify,
   extractError,
   type NotificationConfig, type GA4RealtimeData, type GA4CredentialsStatus,
 } from "@/lib/api";
@@ -782,9 +784,8 @@ function RepositoriesTab() {
 // ─── Teams ────────────────────────────────────────────────────────────────────
 
 const DAY_LABELS = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
-const SLOT_LABELS = ["Mañana", "Tarde", "Noche"];
 
-type SlotDraft = { time: string; message: string };
+type SlotDraft = { time: string; message_ok: string; message_blocked: string };
 
 function TeamsTab() {
   const [teams, setTeams] = useState<Team[]>([]);
@@ -796,9 +797,10 @@ function TeamsTab() {
 
   // Per-team state
   const [channelForms, setChannelForms] = useState<Record<number, { webhook_url: string; label: string }>>({});
-  const [slotDrafts, setSlotDrafts] = useState<Record<number, SlotDraft[]>>({});
+  const [slotDrafts, setSlotDrafts] = useState<Record<number, Record<number, SlotDraft>>>({});
   const [savingSlots, setSavingSlots] = useState<Record<number, boolean>>({});
-  const [testingSlot, setTestingSlot] = useState<Record<string, boolean>>({});
+  const [testingSlot, setTestingSlot] = useState<Record<number, boolean>>({});
+  const [addingSlot, setAddingSlot] = useState<Record<number, boolean>>({});
   const [slotMsg, setSlotMsg] = useState<Record<number, string>>({});
   const [editDays, setEditDays] = useState<Record<number, number[]>>({});
   const [savingDays, setSavingDays] = useState<Record<number, boolean>>({});
@@ -808,13 +810,13 @@ function TeamsTab() {
     try {
       const ts = await getTeams();
       setTeams(ts);
-      // Init slot drafts & day edits from fetched teams
-      const drafts: Record<number, SlotDraft[]> = {};
+      const drafts: Record<number, Record<number, SlotDraft>> = {};
       const days: Record<number, number[]> = {};
       ts.forEach(t => {
-        const bySlot: Record<number, SlotDraft> = {};
-        t.slots.forEach(s => { bySlot[s.slot_number] = { time: s.time ?? "", message: s.message ?? "" }; });
-        drafts[t.id] = [1, 2, 3].map(n => bySlot[n] ?? { time: "", message: "" });
+        drafts[t.id] = {};
+        t.slots.forEach(s => {
+          drafts[t.id][s.id] = { time: s.time ?? "", message_ok: s.message_ok ?? "", message_blocked: s.message_blocked ?? "" };
+        });
         days[t.id] = [...t.deploy_days];
       });
       setSlotDrafts(drafts);
@@ -863,37 +865,68 @@ function TeamsTab() {
     catch (err: any) { alert(extractError(err)); }
   }
 
-  async function handleSaveSlots(teamId: number) {
-    const drafts = slotDrafts[teamId] ?? [];
-    setSavingSlots(s => ({ ...s, [teamId]: true }));
-    try {
-      await upsertTeamSlots(teamId, drafts.map((d, i) => ({
-        slot_number: i + 1,
-        time: d.time || null,
-        message: d.message || null,
-      })));
-      setSlotMsg(m => ({ ...m, [teamId]: "Horarios guardados ✅" }));
-      setTimeout(() => setSlotMsg(m => ({ ...m, [teamId]: "" })), 3000);
-      load();
-    } catch (err: any) { alert(extractError(err)); }
-    finally { setSavingSlots(s => ({ ...s, [teamId]: false })); }
+  async function handleAddSlot(teamId: number) {
+    setAddingSlot(a => ({ ...a, [teamId]: true }));
+    try { await addTeamSlot(teamId, {}); load(); }
+    catch (err: any) { alert(extractError(err)); }
+    finally { setAddingSlot(a => ({ ...a, [teamId]: false })); }
   }
 
-  async function handleTestSlot(teamId: number, slotNumber: number) {
-    const key = `${teamId}_${slotNumber}`;
-    setTestingSlot(t => ({ ...t, [key]: true }));
+  async function handleDeleteSlot(teamId: number, slotId: number, slotsCount: number) {
+    if (slotsCount <= 1) return;
+    if (!confirm("¿Eliminar este horario?")) return;
+    try { await deleteTeamSlot(teamId, slotId); load(); }
+    catch (err: any) { alert(extractError(err)); }
+  }
+
+  async function handleSaveSlot(teamId: number, slotId: number) {
+    const draft = slotDrafts[teamId]?.[slotId] ?? { time: "", message_ok: "", message_blocked: "" };
+    setSavingSlots(s => ({ ...s, [slotId]: true }));
     try {
-      await testTeamNotify(teamId, slotNumber);
-      setSlotMsg(m => ({ ...m, [teamId]: `Slot ${slotNumber} enviado ✅` }));
-      setTimeout(() => setSlotMsg(m => ({ ...m, [teamId]: "" })), 3000);
+      await updateTeamSlot(teamId, slotId, {
+        time: draft.time || null,
+        message_ok: draft.message_ok || null,
+        message_blocked: draft.message_blocked || null,
+      });
+      setSlotMsg(m => ({ ...m, [teamId]: "Guardado ✅" }));
+      setTimeout(() => setSlotMsg(m => ({ ...m, [teamId]: "" })), 2500);
+      load();
     } catch (err: any) { alert(extractError(err)); }
-    finally { setTestingSlot(t => ({ ...t, [key]: false })); }
+    finally { setSavingSlots(s => ({ ...s, [slotId]: false })); }
+  }
+
+  async function handleTestSlot(teamId: number, slotId: number) {
+    setTestingSlot(t => ({ ...t, [slotId]: true }));
+    try {
+      await testTeamNotify(teamId, slotId);
+      setSlotMsg(m => ({ ...m, [teamId]: "Enviado ✅" }));
+      setTimeout(() => setSlotMsg(m => ({ ...m, [teamId]: "" })), 2500);
+    } catch (err: any) { alert(extractError(err)); }
+    finally { setTestingSlot(t => ({ ...t, [slotId]: false })); }
+  }
+
+  async function handleGifUpload(teamId: number, slotId: number, file: File) {
+    try { await uploadTeamSlotGif(teamId, slotId, file); load(); }
+    catch (err: any) { alert(extractError(err)); }
+  }
+
+  async function handleGifDelete(teamId: number, slotId: number) {
+    if (!confirm("¿Eliminar el GIF de este horario?")) return;
+    try { await deleteTeamSlotGif(teamId, slotId); load(); }
+    catch (err: any) { alert(extractError(err)); }
+  }
+
+  function setDraft(teamId: number, slotId: number, patch: Partial<SlotDraft>) {
+    setSlotDrafts(d => ({
+      ...d,
+      [teamId]: { ...d[teamId], [slotId]: { ...(d[teamId]?.[slotId] ?? { time: "", message_ok: "", message_blocked: "" }), ...patch } },
+    }));
   }
 
   return (
     <div className="space-y-6">
       <div className="bg-blue-50 dark:bg-navy-700/50 border border-blue-200 dark:border-navy-700 rounded-xl px-4 py-3 text-sm text-blue-700 dark:text-gray-400">
-        Cada equipo define sus días de deploy y puede notificar a múltiples canales de Google Chat con hasta 3 mensajes diarios. Las notificaciones solo se envían en los días habilitados.
+        Cada equipo define sus días de deploy y puede notificar a múltiples canales de Google Chat. Las notificaciones solo se envían en los días habilitados. Podés subir un GIF por horario y configurar mensajes distintos para cuando el deploy esté libre o bloqueado.
       </div>
 
       {/* Crear equipo */}
@@ -910,15 +943,10 @@ function TeamsTab() {
           <p className="field-label mb-2">Días de deploy</p>
           <div className="flex gap-2 flex-wrap">
             {DAY_LABELS.map((label, i) => (
-              <button key={i} type="button"
-                onClick={() => toggleNewDay(i)}
+              <button key={i} type="button" onClick={() => toggleNewDay(i)}
                 className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition ${
-                  newDays.includes(i)
-                    ? "bg-accent text-white border-accent"
-                    : "border-gray-200 dark:border-navy-700 text-gray-500 dark:text-gray-400 hover:border-accent"
-                }`}>
-                {label}
-              </button>
+                  newDays.includes(i) ? "bg-accent text-white border-accent" : "border-gray-200 dark:border-navy-700 text-gray-500 dark:text-gray-400 hover:border-accent"
+                }`}>{label}</button>
             ))}
           </div>
         </div>
@@ -931,7 +959,7 @@ function TeamsTab() {
         {teams.map(team => (
           <div key={team.id} className="card p-6 space-y-6">
 
-            {/* Header del equipo */}
+            {/* Header */}
             <div className="flex items-start justify-between gap-4">
               <div>
                 <h3 className="text-lg font-bold text-gray-900 dark:text-white">{team.name}</h3>
@@ -939,9 +967,7 @@ function TeamsTab() {
                   {team.deploy_days.length === 0
                     ? <span className="text-gray-400 text-xs italic">Sin días configurados</span>
                     : team.deploy_days.map(d => (
-                        <span key={d} className="bg-accent/10 text-accent text-xs font-semibold px-2.5 py-1 rounded-full">
-                          {DAY_LABELS[d]}
-                        </span>
+                        <span key={d} className="bg-accent/10 text-accent text-xs font-semibold px-2.5 py-1 rounded-full">{DAY_LABELS[d]}</span>
                       ))}
                 </div>
               </div>
@@ -949,7 +975,7 @@ function TeamsTab() {
                 className="text-gray-300 dark:text-gray-600 hover:text-red-500 transition text-xl flex-shrink-0 px-1">×</button>
             </div>
 
-            {/* Editar días de deploy */}
+            {/* Días de deploy */}
             <div className="space-y-2">
               <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Días de deploy</p>
               <div className="flex gap-2 flex-wrap items-center">
@@ -960,21 +986,15 @@ function TeamsTab() {
                       return { ...d, [team.id]: cur.includes(i) ? cur.filter(x => x !== i) : [...cur, i].sort((a,b) => a-b) };
                     })}
                     className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition ${
-                      (editDays[team.id] ?? []).includes(i)
-                        ? "bg-accent text-white border-accent"
-                        : "border-gray-200 dark:border-navy-700 text-gray-500 dark:text-gray-400 hover:border-accent"
-                    }`}>
-                    {label}
-                  </button>
+                      (editDays[team.id] ?? []).includes(i) ? "bg-accent text-white border-accent" : "border-gray-200 dark:border-navy-700 text-gray-500 dark:text-gray-400 hover:border-accent"
+                    }`}>{label}</button>
                 ))}
                 <button onClick={() => handleSaveDays(team)} disabled={savingDays[team.id]}
-                  className="btn-primary text-xs py-1.5 px-3">
-                  {savingDays[team.id] ? "..." : "Guardar"}
-                </button>
+                  className="btn-primary text-xs py-1.5 px-3">{savingDays[team.id] ? "..." : "Guardar"}</button>
               </div>
             </div>
 
-            {/* Canales de Google Chat */}
+            {/* Canales */}
             <div className="space-y-3">
               <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Canales de Google Chat</p>
               {team.channels.length > 0 ? (
@@ -990,11 +1010,9 @@ function TeamsTab() {
                     </div>
                   ))}
                 </div>
-              ) : (
-                <p className="text-gray-400 text-sm italic">Sin canales configurados</p>
-              )}
+              ) : <p className="text-gray-400 text-sm italic">Sin canales configurados</p>}
               <div className="flex gap-2">
-                <input className="field flex-1" placeholder="Nombre del canal (ej. Canal principal)"
+                <input className="field flex-1" placeholder="Nombre del canal"
                   value={channelForms[team.id]?.label ?? ""}
                   onChange={e => setChannelForms(f => ({ ...f, [team.id]: { ...f[team.id], label: e.target.value, webhook_url: f[team.id]?.webhook_url ?? "" } }))} />
                 <input className="field flex-1 font-mono text-xs" placeholder="https://chat.googleapis.com/v1/spaces/..."
@@ -1005,50 +1023,86 @@ function TeamsTab() {
               </div>
             </div>
 
-            {/* Slots de notificación */}
+            {/* Horarios de notificación */}
             <div className="space-y-3">
-              <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Mensajes programados (hora UTC)</p>
-              {slotMsg[team.id] && <p className="text-green-500 text-sm">{slotMsg[team.id]}</p>}
-              <div className="space-y-3">
-                {[0, 1, 2].map(idx => {
-                  const draft = slotDrafts[team.id]?.[idx] ?? { time: "", message: "" };
-                  const slotNumber = idx + 1;
-                  const testKey = `${team.id}_${slotNumber}`;
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Horarios de notificación (UTC)</p>
+                {slotMsg[team.id] && <span className="text-green-500 text-sm">{slotMsg[team.id]}</span>}
+              </div>
+
+              <div className="space-y-4">
+                {team.slots.map(slot => {
+                  const draft = slotDrafts[team.id]?.[slot.id] ?? { time: "", message_ok: "", message_blocked: "" };
                   return (
-                    <div key={idx} className="bg-gray-50 dark:bg-navy-800 rounded-xl p-4 space-y-3">
-                      <div className="flex items-center gap-3">
-                        <span className="text-xs font-semibold text-gray-500 dark:text-gray-400 w-16">{SLOT_LABELS[idx]}</span>
+                    <div key={slot.id} className="bg-gray-50 dark:bg-navy-800 rounded-xl p-4 space-y-3">
+
+                      {/* Hora + acciones */}
+                      <div className="flex items-center gap-3 flex-wrap">
                         <input type="time" className="field w-36"
                           value={draft.time}
-                          onChange={e => setSlotDrafts(d => {
-                            const arr = [...(d[team.id] ?? [{time:"",message:""},{time:"",message:""},{time:"",message:""}])];
-                            arr[idx] = { ...arr[idx], time: e.target.value };
-                            return { ...d, [team.id]: arr };
-                          })} />
-                        <button
-                          onClick={() => handleTestSlot(team.id, slotNumber)}
-                          disabled={testingSlot[testKey] || !draft.message || !team.channels.length}
-                          className="ml-auto px-3 py-1.5 rounded-lg border border-gray-200 dark:border-navy-700 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-navy-700 transition disabled:opacity-40">
-                          {testingSlot[testKey] ? "Enviando..." : "📨 Probar"}
-                        </button>
+                          onChange={e => setDraft(team.id, slot.id, { time: e.target.value })} />
+                        <div className="flex gap-2 ml-auto">
+                          <button onClick={() => handleTestSlot(team.id, slot.id)}
+                            disabled={testingSlot[slot.id] || (!draft.message_ok && !draft.message_blocked) || !team.channels.length}
+                            className="px-3 py-1.5 rounded-lg border border-gray-200 dark:border-navy-700 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-navy-700 transition disabled:opacity-40">
+                            {testingSlot[slot.id] ? "Enviando..." : "📨 Probar"}
+                          </button>
+                          <button onClick={() => handleSaveSlot(team.id, slot.id)}
+                            disabled={savingSlots[slot.id]}
+                            className="btn-primary text-xs py-1.5 px-3">
+                            {savingSlots[slot.id] ? "..." : "Guardar"}
+                          </button>
+                          {team.slots.length > 1 && (
+                            <button onClick={() => handleDeleteSlot(team.id, slot.id, team.slots.length)}
+                              className="text-gray-300 dark:text-gray-600 hover:text-red-500 transition text-lg px-1">×</button>
+                          )}
+                        </div>
                       </div>
-                      <textarea
-                        className="field w-full h-20 text-sm resize-none"
-                        placeholder={`Mensaje ${slotNumber} (con emojis, saltos de línea, etc.)`}
-                        value={draft.message}
-                        onChange={e => setSlotDrafts(d => {
-                          const arr = [...(d[team.id] ?? [{time:"",message:""},{time:"",message:""},{time:"",message:""}])];
-                          arr[idx] = { ...arr[idx], message: e.target.value };
-                          return { ...d, [team.id]: arr };
-                        })}
-                      />
+
+                      {/* Mensajes */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                          <label className="field-label text-green-600 dark:text-green-400">✅ Mensaje si deploy LIBRE</label>
+                          <textarea className="field w-full h-24 text-sm resize-none"
+                            placeholder={"🐋 ¡Buen día! Somos las Orcas y estamos listos para deployar hoy 🚀"}
+                            value={draft.message_ok}
+                            onChange={e => setDraft(team.id, slot.id, { message_ok: e.target.value })} />
+                        </div>
+                        <div>
+                          <label className="field-label text-red-500 dark:text-red-400">🔴 Mensaje si deploy BLOQUEADO</label>
+                          <textarea className="field w-full h-24 text-sm resize-none"
+                            placeholder={"🚫 Ojo Orcas, hoy hay promo activa. No deployamos nada sin avisar primero."}
+                            value={draft.message_blocked}
+                            onChange={e => setDraft(team.id, slot.id, { message_blocked: e.target.value })} />
+                        </div>
+                      </div>
+
+                      {/* GIF */}
+                      <div className="flex items-center gap-3 flex-wrap">
+                        {slot.has_gif ? (
+                          <>
+                            <img src={`/api/public/team-gif/${slot.id}`} alt="GIF" className="h-14 rounded-lg object-cover border border-gray-200 dark:border-navy-700" />
+                            <span className="text-xs text-gray-500 dark:text-gray-400">{slot.gif_filename}</span>
+                            <button onClick={() => handleGifDelete(team.id, slot.id)}
+                              className="text-xs text-red-500 hover:underline">Eliminar GIF</button>
+                          </>
+                        ) : (
+                          <label className="cursor-pointer flex items-center gap-2 px-3 py-1.5 rounded-lg border border-dashed border-gray-300 dark:border-navy-600 text-xs text-gray-500 dark:text-gray-400 hover:border-accent hover:text-accent transition">
+                            🖼 Subir GIF / imagen
+                            <input type="file" className="hidden" accept="image/gif,image/png,image/jpeg,image/webp"
+                              onChange={e => { const f = e.target.files?.[0]; if (f) handleGifUpload(team.id, slot.id, f); e.target.value = ""; }} />
+                          </label>
+                        )}
+                      </div>
+
                     </div>
                   );
                 })}
               </div>
-              <button onClick={() => handleSaveSlots(team.id)} disabled={savingSlots[team.id]}
-                className="btn-primary">
-                {savingSlots[team.id] ? "Guardando..." : "Guardar horarios"}
+
+              <button onClick={() => handleAddSlot(team.id)} disabled={addingSlot[team.id]}
+                className="px-4 py-2 rounded-xl border border-dashed border-gray-300 dark:border-navy-600 text-sm text-gray-500 dark:text-gray-400 hover:border-accent hover:text-accent transition disabled:opacity-50">
+                {addingSlot[team.id] ? "Agregando..." : "+ Agregar horario"}
               </button>
             </div>
 

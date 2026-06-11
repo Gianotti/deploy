@@ -19,9 +19,12 @@ export interface TeamChannel {
 
 export interface TeamNotificationSlot {
   id: number;
-  slot_number: number;
+  sort_order: number;
   time: string | null;
-  message: string | null;
+  message_ok: string | null;
+  message_blocked: string | null;
+  has_gif: boolean;
+  gif_filename: string | null;
 }
 
 export interface Team {

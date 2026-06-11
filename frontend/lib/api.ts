@@ -283,13 +283,37 @@ export async function removeTeamChannel(teamId: number, channelId: number): Prom
   return (await api.delete<Team>(`/teams/${teamId}/channels/${channelId}`)).data;
 }
 
-export async function upsertTeamSlots(
+export async function addTeamSlot(
   teamId: number,
-  slots: { slot_number: number; time: string | null; message: string | null }[]
+  data: { time?: string | null; message_ok?: string | null; message_blocked?: string | null }
 ): Promise<Team> {
-  return (await api.put<Team>(`/teams/${teamId}/slots`, slots)).data;
+  return (await api.post<Team>(`/teams/${teamId}/slots`, data)).data;
 }
 
-export async function testTeamNotify(teamId: number, slotNumber: number): Promise<{ sent: boolean; channels: number }> {
-  return (await api.post(`/teams/${teamId}/test-notify/${slotNumber}`)).data;
+export async function updateTeamSlot(
+  teamId: number,
+  slotId: number,
+  data: { time: string | null; message_ok: string | null; message_blocked: string | null }
+): Promise<Team> {
+  return (await api.patch<Team>(`/teams/${teamId}/slots/${slotId}`, data)).data;
+}
+
+export async function deleteTeamSlot(teamId: number, slotId: number): Promise<Team> {
+  return (await api.delete<Team>(`/teams/${teamId}/slots/${slotId}`)).data;
+}
+
+export async function uploadTeamSlotGif(teamId: number, slotId: number, file: File): Promise<Team> {
+  const form = new FormData();
+  form.append("file", file);
+  return (await api.post<Team>(`/teams/${teamId}/slots/${slotId}/gif`, form, {
+    headers: { "Content-Type": "multipart/form-data" },
+  })).data;
+}
+
+export async function deleteTeamSlotGif(teamId: number, slotId: number): Promise<Team> {
+  return (await api.delete<Team>(`/teams/${teamId}/slots/${slotId}/gif`)).data;
+}
+
+export async function testTeamNotify(teamId: number, slotId: number): Promise<{ sent: boolean; channels: number }> {
+  return (await api.post(`/teams/${teamId}/slots/${slotId}/test-notify`)).data;
 }
