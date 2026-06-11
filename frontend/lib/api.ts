@@ -16,6 +16,7 @@ import type {
   DeployWindowResponse,
   Promotion,
   Repository,
+  Team,
   TodayStatusResponse,
   User,
 } from "@/types";
@@ -254,4 +255,41 @@ export async function addClientToRepository(repoId: number, clientId: number): P
 
 export async function removeClientFromRepository(repoId: number, clientId: number): Promise<Repository> {
   return (await api.delete<Repository>(`/repositories/${repoId}/clients/${clientId}`)).data;
+}
+
+// ── Teams ─────────────────────────────────────────────────────────────────────
+
+export async function getTeams(): Promise<Team[]> {
+  return (await api.get<Team[]>("/teams/")).data;
+}
+
+export async function createTeam(data: { name: string; deploy_days: number[] }): Promise<Team> {
+  return (await api.post<Team>("/teams/", data)).data;
+}
+
+export async function updateTeam(id: number, data: { name?: string; deploy_days?: number[] }): Promise<Team> {
+  return (await api.patch<Team>(`/teams/${id}`, data)).data;
+}
+
+export async function deleteTeam(id: number): Promise<void> {
+  await api.delete(`/teams/${id}`);
+}
+
+export async function addTeamChannel(teamId: number, data: { webhook_url: string; label?: string }): Promise<Team> {
+  return (await api.post<Team>(`/teams/${teamId}/channels`, data)).data;
+}
+
+export async function removeTeamChannel(teamId: number, channelId: number): Promise<Team> {
+  return (await api.delete<Team>(`/teams/${teamId}/channels/${channelId}`)).data;
+}
+
+export async function upsertTeamSlots(
+  teamId: number,
+  slots: { slot_number: number; time: string | null; message: string | null }[]
+): Promise<Team> {
+  return (await api.put<Team>(`/teams/${teamId}/slots`, slots)).data;
+}
+
+export async function testTeamNotify(teamId: number, slotNumber: number): Promise<{ sent: boolean; channels: number }> {
+  return (await api.post(`/teams/${teamId}/test-notify/${slotNumber}`)).data;
 }

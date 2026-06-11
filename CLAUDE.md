@@ -109,7 +109,7 @@ Frontend: JWT stored in a cookie (`access_token`, 1-day expiry) via `js-cookie`.
 | `/dashboard` | Semáforo per-client: "¿puedo deployar ahora?" |
 | `/calendar` | Month grid with color-coded days + detail panel |
 | `/promotions` | List + create form (create/delete for admin + comercial) |
-| `/admin` | Tabbed admin panel: Countries, Clients, Deploy Rules, Notifications (Google Chat), GA4, Repositories |
+| `/admin` | Tabbed admin panel: Countries, Clients, Deploy Rules, Notifications (Google Chat), GA4, Repositories, Teams |
 | `/landing` | Public-facing status page (no login required) |
 
 ### Data model relationships
@@ -118,11 +118,16 @@ Frontend: JWT stored in a cookie (`access_token`, 1-day expiry) via `js-cookie`.
 Country → Client → Promotion
 DeployRule (global, not per-client) × Promotion → DeployWindowDay (computed, never stored)
 Repository ←→ Client (many-to-many via client_repositories)
+Team → TeamChannel (webhook destinations), TeamNotificationSlot (time + message, up to 3)
 IntegrationConfig (key/value store) — holds GA4 service account JSON
 NotificationConfig (singleton row) — Google Chat webhook + up to 3 daily notification times
 ```
 
 `DeployRule` rows are global. To change behavior for a specific promo type/criticality, add/edit a `DeployRule` row — no code change needed.
+
+### Team notifications
+
+`Team` has `deploy_days` (int[], 0=Mon…6=Sun), multiple `TeamChannel` rows (webhook + label), and up to 3 `TeamNotificationSlot` rows (time HH:MM UTC + freeform message). The scheduler fires per-slot jobs (`team_{id}_slot_{1|2|3}`) that check `datetime.utcnow().weekday()` against `deploy_days` before sending — no message goes out on non-deploy days. All channels of the team receive the same message. `POST /teams/{id}/test-notify/{slot}` sends immediately regardless of day for testing.
 
 ### Repository linking
 

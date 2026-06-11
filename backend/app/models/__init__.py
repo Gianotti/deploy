@@ -6,5 +6,10 @@ from app.models.deploy_rule import DeployRule
 from app.models.notification_config import NotificationConfig
 from app.models.integration_config import IntegrationConfig
 from app.models.repository import Repository
+from app.models.team import Team, TeamChannel, TeamNotificationSlot
 
-__all__ = ["User", "Country", "Client", "Promotion", "DeployRule", "NotificationConfig", "IntegrationConfig", "Repository"]
+__all__ = [
+    "User", "Country", "Client", "Promotion", "DeployRule",
+    "NotificationConfig", "IntegrationConfig", "Repository",
+    "Team", "TeamChannel", "TeamNotificationSlot",
+]

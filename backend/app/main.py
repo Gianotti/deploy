@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import api_router
 from app.db.base import Base, engine
-from app.scheduler import scheduler, rebuild_notification_jobs
+from app.scheduler import scheduler, rebuild_notification_jobs, rebuild_all_team_jobs
 import app.models  # ensure all models are registered before create_all
 
 
@@ -26,6 +26,8 @@ async def lifespan(app: FastAPI):
             rebuild_notification_jobs(cfg.time_1, cfg.time_2, cfg.time_3)
     finally:
         db.close()
+
+    rebuild_all_team_jobs()
 
     yield
 

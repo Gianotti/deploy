@@ -11,6 +11,27 @@ export interface Repository {
   clients: ClientSummary[];
 }
 
+export interface TeamChannel {
+  id: number;
+  webhook_url: string;
+  label: string | null;
+}
+
+export interface TeamNotificationSlot {
+  id: number;
+  slot_number: number;
+  time: string | null;
+  message: string | null;
+}
+
+export interface Team {
+  id: number;
+  name: string;
+  deploy_days: number[];
+  channels: TeamChannel[];
+  slots: TeamNotificationSlot[];
+}
+
 export interface User {
   id: number;
   email: string;

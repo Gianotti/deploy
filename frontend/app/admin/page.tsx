@@ -10,12 +10,13 @@ import {
   getNotificationConfig, saveNotificationConfig, sendNotificationNow,
   getGA4CredentialsStatus, saveGA4Credentials, deleteGA4Credentials, getGA4Realtime,
   getRepositories, createRepository, deleteRepository, addClientToRepository, removeClientFromRepository,
+  getTeams, createTeam, updateTeam, deleteTeam, addTeamChannel, removeTeamChannel, upsertTeamSlots, testTeamNotify,
   extractError,
   type NotificationConfig, type GA4RealtimeData, type GA4CredentialsStatus,
 } from "@/lib/api";
-import type { Country, Client, DeployRule, PromoType, DeployStatus, Repository } from "@/types";
+import type { Country, Client, DeployRule, PromoType, DeployStatus, Repository, Team } from "@/types";
 
-type Tab = "countries" | "clients" | "rules" | "notifications" | "ga4" | "repositories";
+type Tab = "countries" | "clients" | "rules" | "notifications" | "ga4" | "repositories" | "teams";
 
 const PROMO_TYPES: PromoType[] = ["PROMO_ESPECIAL", "PROMO_NORMAL"];
 const DEPLOY_STATUSES: DeployStatus[] = ["LIBRE", "RESTRINGIDO", "BLOQUEADO"];
@@ -778,6 +779,286 @@ function RepositoriesTab() {
   );
 }
 
+// ─── Teams ────────────────────────────────────────────────────────────────────
+
+const DAY_LABELS = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
+const SLOT_LABELS = ["Mañana", "Tarde", "Noche"];
+
+type SlotDraft = { time: string; message: string };
+
+function TeamsTab() {
+  const [teams, setTeams] = useState<Team[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [newName, setNewName] = useState("");
+  const [newDays, setNewDays] = useState<number[]>([]);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  // Per-team state
+  const [channelForms, setChannelForms] = useState<Record<number, { webhook_url: string; label: string }>>({});
+  const [slotDrafts, setSlotDrafts] = useState<Record<number, SlotDraft[]>>({});
+  const [savingSlots, setSavingSlots] = useState<Record<number, boolean>>({});
+  const [testingSlot, setTestingSlot] = useState<Record<string, boolean>>({});
+  const [slotMsg, setSlotMsg] = useState<Record<number, string>>({});
+  const [editDays, setEditDays] = useState<Record<number, number[]>>({});
+  const [savingDays, setSavingDays] = useState<Record<number, boolean>>({});
+
+  async function load() {
+    setLoading(true);
+    try {
+      const ts = await getTeams();
+      setTeams(ts);
+      // Init slot drafts & day edits from fetched teams
+      const drafts: Record<number, SlotDraft[]> = {};
+      const days: Record<number, number[]> = {};
+      ts.forEach(t => {
+        const bySlot: Record<number, SlotDraft> = {};
+        t.slots.forEach(s => { bySlot[s.slot_number] = { time: s.time ?? "", message: s.message ?? "" }; });
+        drafts[t.id] = [1, 2, 3].map(n => bySlot[n] ?? { time: "", message: "" });
+        days[t.id] = [...t.deploy_days];
+      });
+      setSlotDrafts(drafts);
+      setEditDays(days);
+    } finally { setLoading(false); }
+  }
+  useEffect(() => { load(); }, []);
+
+  function toggleNewDay(d: number) {
+    setNewDays(prev => prev.includes(d) ? prev.filter(x => x !== d) : [...prev, d].sort((a, b) => a - b));
+  }
+
+  async function handleCreate(e: React.FormEvent) {
+    e.preventDefault(); setError(""); setSaving(true);
+    try { await createTeam({ name: newName, deploy_days: newDays }); setNewName(""); setNewDays([]); load(); }
+    catch (err: any) { setError(extractError(err)); }
+    finally { setSaving(false); }
+  }
+
+  async function handleDeleteTeam(id: number, name: string) {
+    if (!confirm(`¿Eliminar equipo "${name}"?`)) return;
+    try { await deleteTeam(id); load(); }
+    catch (err: any) { alert(extractError(err)); }
+  }
+
+  async function handleSaveDays(team: Team) {
+    setSavingDays(d => ({ ...d, [team.id]: true }));
+    try { await updateTeam(team.id, { deploy_days: editDays[team.id] ?? [] }); load(); }
+    catch (err: any) { alert(extractError(err)); }
+    finally { setSavingDays(d => ({ ...d, [team.id]: false })); }
+  }
+
+  async function handleAddChannel(teamId: number) {
+    const form = channelForms[teamId];
+    if (!form?.webhook_url) return;
+    try {
+      await addTeamChannel(teamId, { webhook_url: form.webhook_url, label: form.label || undefined });
+      setChannelForms(f => ({ ...f, [teamId]: { webhook_url: "", label: "" } }));
+      load();
+    } catch (err: any) { alert(extractError(err)); }
+  }
+
+  async function handleRemoveChannel(teamId: number, channelId: number, label: string) {
+    if (!confirm(`¿Eliminar canal "${label || "sin nombre"}"?`)) return;
+    try { await removeTeamChannel(teamId, channelId); load(); }
+    catch (err: any) { alert(extractError(err)); }
+  }
+
+  async function handleSaveSlots(teamId: number) {
+    const drafts = slotDrafts[teamId] ?? [];
+    setSavingSlots(s => ({ ...s, [teamId]: true }));
+    try {
+      await upsertTeamSlots(teamId, drafts.map((d, i) => ({
+        slot_number: i + 1,
+        time: d.time || null,
+        message: d.message || null,
+      })));
+      setSlotMsg(m => ({ ...m, [teamId]: "Horarios guardados ✅" }));
+      setTimeout(() => setSlotMsg(m => ({ ...m, [teamId]: "" })), 3000);
+      load();
+    } catch (err: any) { alert(extractError(err)); }
+    finally { setSavingSlots(s => ({ ...s, [teamId]: false })); }
+  }
+
+  async function handleTestSlot(teamId: number, slotNumber: number) {
+    const key = `${teamId}_${slotNumber}`;
+    setTestingSlot(t => ({ ...t, [key]: true }));
+    try {
+      await testTeamNotify(teamId, slotNumber);
+      setSlotMsg(m => ({ ...m, [teamId]: `Slot ${slotNumber} enviado ✅` }));
+      setTimeout(() => setSlotMsg(m => ({ ...m, [teamId]: "" })), 3000);
+    } catch (err: any) { alert(extractError(err)); }
+    finally { setTestingSlot(t => ({ ...t, [key]: false })); }
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="bg-blue-50 dark:bg-navy-700/50 border border-blue-200 dark:border-navy-700 rounded-xl px-4 py-3 text-sm text-blue-700 dark:text-gray-400">
+        Cada equipo define sus días de deploy y puede notificar a múltiples canales de Google Chat con hasta 3 mensajes diarios. Las notificaciones solo se envían en los días habilitados.
+      </div>
+
+      {/* Crear equipo */}
+      <form onSubmit={handleCreate} className="card p-6 space-y-4">
+        <h2 className="font-semibold text-gray-900 dark:text-white">Nuevo equipo</h2>
+        <div className="flex gap-3">
+          <input className="field flex-1" required placeholder="🐋 Orcas, 🐆 Coyotes…" value={newName}
+            onChange={e => setNewName(e.target.value)} />
+          <button type="submit" disabled={saving} className="btn-primary flex-shrink-0">
+            {saving ? "Guardando..." : "+ Crear"}
+          </button>
+        </div>
+        <div>
+          <p className="field-label mb-2">Días de deploy</p>
+          <div className="flex gap-2 flex-wrap">
+            {DAY_LABELS.map((label, i) => (
+              <button key={i} type="button"
+                onClick={() => toggleNewDay(i)}
+                className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition ${
+                  newDays.includes(i)
+                    ? "bg-accent text-white border-accent"
+                    : "border-gray-200 dark:border-navy-700 text-gray-500 dark:text-gray-400 hover:border-accent"
+                }`}>
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+        {error && <p className="text-red-500 text-sm">{error}</p>}
+      </form>
+
+      {/* Lista de equipos */}
+      <div className="space-y-6">
+        {loading && <p className="text-gray-400 text-sm">Cargando...</p>}
+        {teams.map(team => (
+          <div key={team.id} className="card p-6 space-y-6">
+
+            {/* Header del equipo */}
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h3 className="text-lg font-bold text-gray-900 dark:text-white">{team.name}</h3>
+                <div className="flex gap-1.5 mt-2 flex-wrap">
+                  {team.deploy_days.length === 0
+                    ? <span className="text-gray-400 text-xs italic">Sin días configurados</span>
+                    : team.deploy_days.map(d => (
+                        <span key={d} className="bg-accent/10 text-accent text-xs font-semibold px-2.5 py-1 rounded-full">
+                          {DAY_LABELS[d]}
+                        </span>
+                      ))}
+                </div>
+              </div>
+              <button onClick={() => handleDeleteTeam(team.id, team.name)}
+                className="text-gray-300 dark:text-gray-600 hover:text-red-500 transition text-xl flex-shrink-0 px-1">×</button>
+            </div>
+
+            {/* Editar días de deploy */}
+            <div className="space-y-2">
+              <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Días de deploy</p>
+              <div className="flex gap-2 flex-wrap items-center">
+                {DAY_LABELS.map((label, i) => (
+                  <button key={i} type="button"
+                    onClick={() => setEditDays(d => {
+                      const cur = d[team.id] ?? [];
+                      return { ...d, [team.id]: cur.includes(i) ? cur.filter(x => x !== i) : [...cur, i].sort((a,b) => a-b) };
+                    })}
+                    className={`px-3 py-1.5 rounded-lg text-sm font-medium border transition ${
+                      (editDays[team.id] ?? []).includes(i)
+                        ? "bg-accent text-white border-accent"
+                        : "border-gray-200 dark:border-navy-700 text-gray-500 dark:text-gray-400 hover:border-accent"
+                    }`}>
+                    {label}
+                  </button>
+                ))}
+                <button onClick={() => handleSaveDays(team)} disabled={savingDays[team.id]}
+                  className="btn-primary text-xs py-1.5 px-3">
+                  {savingDays[team.id] ? "..." : "Guardar"}
+                </button>
+              </div>
+            </div>
+
+            {/* Canales de Google Chat */}
+            <div className="space-y-3">
+              <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Canales de Google Chat</p>
+              {team.channels.length > 0 ? (
+                <div className="space-y-2">
+                  {team.channels.map(ch => (
+                    <div key={ch.id} className="flex items-center gap-3 bg-gray-50 dark:bg-navy-800 rounded-xl px-4 py-2.5">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-gray-900 dark:text-white truncate">{ch.label || "Canal sin nombre"}</p>
+                        <p className="text-xs text-gray-400 truncate font-mono">{ch.webhook_url}</p>
+                      </div>
+                      <button onClick={() => handleRemoveChannel(team.id, ch.id, ch.label ?? "")}
+                        className="text-gray-300 dark:text-gray-600 hover:text-red-500 transition text-lg flex-shrink-0">×</button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-gray-400 text-sm italic">Sin canales configurados</p>
+              )}
+              <div className="flex gap-2">
+                <input className="field flex-1" placeholder="Nombre del canal (ej. Canal principal)"
+                  value={channelForms[team.id]?.label ?? ""}
+                  onChange={e => setChannelForms(f => ({ ...f, [team.id]: { ...f[team.id], label: e.target.value, webhook_url: f[team.id]?.webhook_url ?? "" } }))} />
+                <input className="field flex-1 font-mono text-xs" placeholder="https://chat.googleapis.com/v1/spaces/..."
+                  value={channelForms[team.id]?.webhook_url ?? ""}
+                  onChange={e => setChannelForms(f => ({ ...f, [team.id]: { ...f[team.id], webhook_url: e.target.value, label: f[team.id]?.label ?? "" } }))} />
+                <button onClick={() => handleAddChannel(team.id)} disabled={!channelForms[team.id]?.webhook_url}
+                  className="btn-primary flex-shrink-0 disabled:opacity-50">+ Canal</button>
+              </div>
+            </div>
+
+            {/* Slots de notificación */}
+            <div className="space-y-3">
+              <p className="text-sm font-medium text-gray-700 dark:text-gray-300">Mensajes programados (hora UTC)</p>
+              {slotMsg[team.id] && <p className="text-green-500 text-sm">{slotMsg[team.id]}</p>}
+              <div className="space-y-3">
+                {[0, 1, 2].map(idx => {
+                  const draft = slotDrafts[team.id]?.[idx] ?? { time: "", message: "" };
+                  const slotNumber = idx + 1;
+                  const testKey = `${team.id}_${slotNumber}`;
+                  return (
+                    <div key={idx} className="bg-gray-50 dark:bg-navy-800 rounded-xl p-4 space-y-3">
+                      <div className="flex items-center gap-3">
+                        <span className="text-xs font-semibold text-gray-500 dark:text-gray-400 w-16">{SLOT_LABELS[idx]}</span>
+                        <input type="time" className="field w-36"
+                          value={draft.time}
+                          onChange={e => setSlotDrafts(d => {
+                            const arr = [...(d[team.id] ?? [{time:"",message:""},{time:"",message:""},{time:"",message:""}])];
+                            arr[idx] = { ...arr[idx], time: e.target.value };
+                            return { ...d, [team.id]: arr };
+                          })} />
+                        <button
+                          onClick={() => handleTestSlot(team.id, slotNumber)}
+                          disabled={testingSlot[testKey] || !draft.message || !team.channels.length}
+                          className="ml-auto px-3 py-1.5 rounded-lg border border-gray-200 dark:border-navy-700 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-navy-700 transition disabled:opacity-40">
+                          {testingSlot[testKey] ? "Enviando..." : "📨 Probar"}
+                        </button>
+                      </div>
+                      <textarea
+                        className="field w-full h-20 text-sm resize-none"
+                        placeholder={`Mensaje ${slotNumber} (con emojis, saltos de línea, etc.)`}
+                        value={draft.message}
+                        onChange={e => setSlotDrafts(d => {
+                          const arr = [...(d[team.id] ?? [{time:"",message:""},{time:"",message:""},{time:"",message:""}])];
+                          arr[idx] = { ...arr[idx], message: e.target.value };
+                          return { ...d, [team.id]: arr };
+                        })}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+              <button onClick={() => handleSaveSlots(team.id)} disabled={savingSlots[team.id]}
+                className="btn-primary">
+                {savingSlots[team.id] ? "Guardando..." : "Guardar horarios"}
+              </button>
+            </div>
+
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 const TABS: { id: Tab; label: string }[] = [
@@ -787,6 +1068,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "notifications", label: "💬 Notificaciones" },
   { id: "ga4",           label: "📊 GA4" },
   { id: "repositories",  label: "🗂 Repositorios" },
+  { id: "teams",         label: "👥 Equipos" },
 ];
 
 export default function AdminPage() {
@@ -825,6 +1107,7 @@ export default function AdminPage() {
         {tab === "notifications" && <NotificationsTab />}
         {tab === "ga4"           && <GA4Tab />}
         {tab === "repositories"  && <RepositoriesTab />}
+        {tab === "teams"         && <TeamsTab />}
       </div>
     </AuthGuard>
   );
