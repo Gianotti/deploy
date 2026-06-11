@@ -56,6 +56,8 @@ export interface Client {
   country_id: number;
   country: Country;
   ga4_property_id: string | null;
+  has_logo?: boolean;
+  logo_filename?: string | null;
 }
 
 export type PromoType = "PROMO_ESPECIAL" | "PROMO_NORMAL";

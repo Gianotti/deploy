@@ -21,5 +21,19 @@ class ClientUpdate(BaseModel):
 class ClientOut(ClientBase):
     id: int
     country: CountryOut
+    has_logo: bool = False
+    logo_filename: str | None = None
 
     model_config = {"from_attributes": True}
+
+    @classmethod
+    def from_orm_client(cls, c) -> "ClientOut":
+        return cls(
+            id=c.id,
+            name=c.name,
+            country_id=c.country_id,
+            ga4_property_id=c.ga4_property_id,
+            country=c.country,
+            has_logo=c.logo_data is not None,
+            logo_filename=c.logo_filename,
+        )

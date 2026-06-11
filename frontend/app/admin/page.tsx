@@ -5,7 +5,7 @@ import AuthGuard from "@/components/AuthGuard";
 import { useAuth } from "@/lib/auth";
 import {
   getCountries, createCountry, deleteCountry,
-  getClients, createClient, deleteClient, updateClientGA4,
+  getClients, createClient, deleteClient, updateClientGA4, uploadClientLogo, deleteClientLogo,
   getDeployRules, createDeployRule, deleteDeployRule,
   getNotificationConfig, saveNotificationConfig, sendNotificationNow,
   getGA4CredentialsStatus, saveGA4Credentials, deleteGA4Credentials, getGA4Realtime,
@@ -225,13 +225,35 @@ function ClientsTab() {
       <div className="space-y-2">
         {loading && <p className="text-gray-400 text-sm">Cargando...</p>}
         {clients.map(c => (
-          <div key={c.id} className="card px-5 py-3 flex items-center justify-between">
-            <div>
-              <span className="font-medium text-gray-900 dark:text-white">{c.name}</span>
-              <span className="ml-3 text-gray-400 text-sm">{c.country.name}</span>
-              <span className="ml-2 text-xs bg-gray-100 dark:bg-navy-700 text-gray-500 dark:text-gray-400 px-2 py-0.5 rounded-full">{c.country.iso_code}</span>
+          <div key={c.id} className="card px-5 py-3 flex items-center justify-between gap-4">
+            <div className="flex items-center gap-3 min-w-0">
+              {/* Logo preview */}
+              {c.has_logo ? (
+                <div className="w-10 h-10 rounded-lg overflow-hidden flex-shrink-0 bg-white dark:bg-navy-900 border border-gray-200 dark:border-navy-700">
+                  <img src={`/api/clients/${c.id}/logo`} alt={c.name} className="object-contain w-full h-full" />
+                </div>
+              ) : (
+                <div className="w-10 h-10 rounded-lg flex items-center justify-center bg-gray-100 dark:bg-navy-700 flex-shrink-0 text-xl">🏢</div>
+              )}
+              <div className="min-w-0">
+                <span className="font-medium text-gray-900 dark:text-white">{c.name}</span>
+                <span className="ml-3 text-gray-400 text-sm">{c.country.name}</span>
+                <span className="ml-2 text-xs bg-gray-100 dark:bg-navy-700 text-gray-500 dark:text-gray-400 px-2 py-0.5 rounded-full">{c.country.iso_code}</span>
+              </div>
             </div>
-            <button onClick={() => handleDelete(c.id, c.name)} className="text-gray-300 dark:text-gray-600 hover:text-red-500 transition text-xl px-2">×</button>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              {c.has_logo ? (
+                <button onClick={async () => { if (!confirm("¿Eliminar logo?")) return; try { await deleteClientLogo(c.id); load(); } catch (err: any) { alert(extractError(err)); } }}
+                  className="text-xs text-red-500 hover:underline">Quitar logo</button>
+              ) : (
+                <label className="cursor-pointer flex items-center gap-1 px-3 py-1.5 rounded-lg border border-dashed border-gray-300 dark:border-navy-600 text-xs text-gray-500 dark:text-gray-400 hover:border-accent hover:text-accent transition">
+                  🖼 Logo
+                  <input type="file" className="hidden" accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml"
+                    onChange={async e => { const f = e.target.files?.[0]; if (!f) return; try { await uploadClientLogo(c.id, f); load(); } catch (err: any) { alert(extractError(err)); } e.target.value = ""; }} />
+                </label>
+              )}
+              <button onClick={() => handleDelete(c.id, c.name)} className="text-gray-300 dark:text-gray-600 hover:text-red-500 transition text-xl px-2">×</button>
+            </div>
           </div>
         ))}
       </div>

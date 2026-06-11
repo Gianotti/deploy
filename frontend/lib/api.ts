@@ -91,6 +91,18 @@ export async function deleteClient(id: number): Promise<void> {
   await api.delete(`/clients/${id}`);
 }
 
+export async function uploadClientLogo(clientId: number, file: File): Promise<Client> {
+  const form = new FormData();
+  form.append("file", file);
+  return (await api.post<Client>(`/clients/${clientId}/logo`, form, {
+    headers: { "Content-Type": "multipart/form-data" },
+  })).data;
+}
+
+export async function deleteClientLogo(clientId: number): Promise<Client> {
+  return (await api.delete<Client>(`/clients/${clientId}/logo`)).data;
+}
+
 // Deploy Rules
 export async function getDeployRules(): Promise<DeployRule[]> {
   return (await api.get<DeployRule[]>("/deploy-rules/")).data;
@@ -155,6 +167,7 @@ export interface ClientStatus {
   window_start: string | null;
   window_end: string | null;
   active_promo_count: number;
+  has_logo?: boolean;
   ga4_active_users: number | null;
   ga4_by_country: Record<string, number>;
   ga4_top_pages: { path: string; users: number }[];

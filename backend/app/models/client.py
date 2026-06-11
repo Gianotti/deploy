@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, ForeignKey
+from sqlalchemy import Column, Integer, String, ForeignKey, LargeBinary
 from sqlalchemy.orm import relationship
 
 from app.db.base import Base
@@ -10,7 +10,9 @@ class Client(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, nullable=False)
     country_id = Column(Integer, ForeignKey("countries.id"), nullable=False)
-    ga4_property_id = Column(String, nullable=True)  # e.g. "properties/123456789"
+    ga4_property_id = Column(String, nullable=True)
+    logo_data = Column(LargeBinary, nullable=True)
+    logo_filename = Column(String, nullable=True)
 
     country = relationship("Country", back_populates="clients")
     promotions = relationship("Promotion", back_populates="client")

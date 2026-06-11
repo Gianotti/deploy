@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useEffect, useState, useCallback } from "react";
 import { getPublicStatus, type ClientStatus } from "@/lib/api";
 import { useTheme } from "@/lib/theme";
@@ -33,28 +34,49 @@ const STATUS_CONFIG = {
 function ClientCard({ client }: { client: ClientStatus }) {
   const cfg = STATUS_CONFIG[client.deploy_status];
   const countryEntries = Object.entries(client.ga4_by_country ?? {}).sort(([, a], [, b]) => b - a);
+  const logoUrl = `/api/clients/${client.client_id}/logo`;
+
   return (
     <div className={`${cfg.cardBg} border-2 ${cfg.border} rounded-2xl p-6 flex flex-col items-center gap-4`}>
-      <div className={`w-24 h-24 rounded-full ${cfg.bg} ${cfg.glow} flex items-center justify-center`}>
-        <span className="text-4xl">
-          {client.deploy_status === "LIBRE" && "✅"}
-          {client.deploy_status === "RESTRINGIDO" && "⚠️"}
-          {client.deploy_status === "BLOQUEADO" && "🚫"}
-        </span>
+
+      {/* Logo + status row */}
+      <div className="flex items-center justify-between w-full gap-4">
+        <div className="flex items-center gap-3 min-w-0">
+          {client.has_logo ? (
+            <div className="w-16 h-16 rounded-xl overflow-hidden flex-shrink-0 bg-white dark:bg-navy-900 border border-gray-200 dark:border-navy-700">
+              <Image src={logoUrl} alt={client.client_name} width={64} height={64} className="object-contain w-full h-full" unoptimized />
+            </div>
+          ) : (
+            <div className="w-16 h-16 rounded-xl flex items-center justify-center bg-white dark:bg-navy-900 border border-gray-200 dark:border-navy-700 flex-shrink-0">
+              <span className="text-3xl">🏢</span>
+            </div>
+          )}
+          <div className="min-w-0">
+            <p className="text-gray-900 dark:text-white font-black text-xl leading-tight truncate">{client.client_name}</p>
+            <p className="text-gray-400 text-sm mt-0.5">{client.country_name} · {client.country_iso}</p>
+            {client.active_promo_count > 0 && (
+              <p className="text-xs text-gray-400 mt-0.5">
+                {client.active_promo_count} promo{client.active_promo_count > 1 ? "s" : ""} activa{client.active_promo_count > 1 ? "s" : ""}
+              </p>
+            )}
+          </div>
+        </div>
+
+        <div className={`w-20 h-20 rounded-full ${cfg.bg} ${cfg.glow} flex items-center justify-center flex-shrink-0`}>
+          <span className="text-3xl">
+            {client.deploy_status === "LIBRE" && "✅"}
+            {client.deploy_status === "RESTRINGIDO" && "⚠️"}
+            {client.deploy_status === "BLOQUEADO" && "🚫"}
+          </span>
+        </div>
       </div>
-      <div className="text-center">
-        <p className={`text-2xl font-black tracking-wide ${cfg.text}`}>{cfg.label}</p>
-        <p className="text-gray-500 text-sm mt-0.5">{cfg.sublabel}</p>
+
+      {/* Status label */}
+      <div className={`w-full text-center rounded-xl py-2 bg-white dark:bg-navy-900`}>
+        <p className={`text-xl font-black tracking-wide ${cfg.text}`}>{cfg.label}</p>
+        <p className="text-gray-500 text-xs mt-0.5">{cfg.sublabel}</p>
       </div>
-      <div className="text-center border-t border-gray-200 dark:border-navy-700 pt-4 w-full">
-        <p className="text-gray-900 dark:text-white font-bold text-lg leading-tight">{client.client_name}</p>
-        <p className="text-gray-400 text-sm mt-1">{client.country_name} · {client.country_iso}</p>
-        {client.active_promo_count > 0 && (
-          <p className="text-xs text-gray-400 mt-1">
-            {client.active_promo_count} promo{client.active_promo_count > 1 ? "s" : ""} activa{client.active_promo_count > 1 ? "s" : ""}
-          </p>
-        )}
-      </div>
+
       {client.window_start && (
         <div className="bg-white dark:bg-navy-900 rounded-xl px-4 py-2 w-full text-center">
           <p className="text-xs text-gray-400 mb-0.5">Ventana permitida</p>
@@ -157,7 +179,7 @@ export default function LandingPage() {
         </div>
       </header>
 
-      <main className="flex-1 p-6 max-w-7xl mx-auto w-full">
+      <main className="flex-1 p-6 w-full">
         {loading && <div className="flex items-center justify-center h-64"><div className="text-4xl animate-pulse">🚀</div></div>}
 
         {error && (
@@ -180,7 +202,7 @@ export default function LandingPage() {
               <Chip count={restringido.length} label="Con aviso"  color="text-yellow-600 dark:text-yellow-400 bg-yellow-50 dark:bg-yellow-900/30 border-yellow-200 dark:border-yellow-800" />
               <Chip count={libre.length}       label="Libres"     color="text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-900/30 border-green-200 dark:border-green-800" />
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-5">
               {clients.map((c) => <ClientCard key={c.client_id} client={c} />)}
             </div>
           </div>
