@@ -13,7 +13,7 @@ Smart database initialization — three scenarios:
    → alembic upgrade head (only pending migrations run).
 """
 import app.models  # noqa — register all models before create_all
-from sqlalchemy import inspect, text
+from sqlalchemy import text, inspect
 from alembic.config import Config
 from alembic import command
 
@@ -23,38 +23,40 @@ from app.db.base import Base, engine
 def _patch_missing_columns() -> None:
     """
     Directly apply column additions that create_all cannot handle on
-    existing tables. Safe to run multiple times (checks before altering).
-    Extend this list whenever a migration adds columns to existing tables.
+    existing tables. Uses information_schema directly (no Inspector cache).
+    Safe to run multiple times — checks before each ALTER.
     """
-    insp = inspect(engine)
-
     with engine.begin() as conn:
-        clients_cols = {c["name"] for c in insp.get_columns("clients")}
+        def existing_cols(table: str) -> set:
+            rows = conn.execute(text(
+                "SELECT column_name FROM information_schema.columns WHERE table_name = :t"
+            ), {"t": table}).fetchall()
+            return {r[0] for r in rows}
 
-        if "ga4_property_id" not in clients_cols:
-            conn.execute(text("ALTER TABLE clients ADD COLUMN ga4_property_id VARCHAR"))
-            print("  → clients.ga4_property_id added")
+        def has_table(table: str) -> bool:
+            rows = conn.execute(text(
+                "SELECT 1 FROM information_schema.tables WHERE table_name = :t"
+            ), {"t": table}).fetchall()
+            return len(rows) > 0
 
-        if "logo_data" not in clients_cols:
-            conn.execute(text("ALTER TABLE clients ADD COLUMN logo_data BYTEA"))
-            print("  → clients.logo_data added")
+        clients_cols = existing_cols("clients")
+        for col, ddl in [
+            ("ga4_property_id", "ALTER TABLE clients ADD COLUMN ga4_property_id VARCHAR"),
+            ("logo_data",       "ALTER TABLE clients ADD COLUMN logo_data BYTEA"),
+            ("logo_filename",   "ALTER TABLE clients ADD COLUMN logo_filename VARCHAR"),
+        ]:
+            if col not in clients_cols:
+                conn.execute(text(ddl))
+                print(f"  → clients.{col} added")
 
-        if "logo_filename" not in clients_cols:
-            conn.execute(text("ALTER TABLE clients ADD COLUMN logo_filename VARCHAR"))
-            print("  → clients.logo_filename added")
-
-    # Re-inspect after possible changes above
-    insp = inspect(engine)
-    if insp.has_table("team_notification_slots"):
-        with engine.begin() as conn:
-            slot_cols = {c["name"] for c in insp.get_columns("team_notification_slots")}
-
+        if has_table("team_notification_slots"):
+            slot_cols = existing_cols("team_notification_slots")
             for col, ddl in [
-                ("sort_order",     "ALTER TABLE team_notification_slots ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0"),
-                ("message_ok",     "ALTER TABLE team_notification_slots ADD COLUMN message_ok TEXT"),
-                ("message_blocked","ALTER TABLE team_notification_slots ADD COLUMN message_blocked TEXT"),
-                ("gif_data",       "ALTER TABLE team_notification_slots ADD COLUMN gif_data BYTEA"),
-                ("gif_filename",   "ALTER TABLE team_notification_slots ADD COLUMN gif_filename VARCHAR"),
+                ("sort_order",      "ALTER TABLE team_notification_slots ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0"),
+                ("message_ok",      "ALTER TABLE team_notification_slots ADD COLUMN message_ok TEXT"),
+                ("message_blocked", "ALTER TABLE team_notification_slots ADD COLUMN message_blocked TEXT"),
+                ("gif_data",        "ALTER TABLE team_notification_slots ADD COLUMN gif_data BYTEA"),
+                ("gif_filename",    "ALTER TABLE team_notification_slots ADD COLUMN gif_filename VARCHAR"),
             ]:
                 if col not in slot_cols:
                     conn.execute(text(ddl))
@@ -62,9 +64,16 @@ def _patch_missing_columns() -> None:
 
 
 def init() -> None:
-    insp = inspect(engine)
-    has_clients = insp.has_table("clients")
-    has_alembic = insp.has_table("alembic_version")
+    with engine.connect() as probe:
+        def _has_table(t: str) -> bool:
+            rows = probe.execute(text(
+                "SELECT 1 FROM information_schema.tables WHERE table_name = :t"
+            ), {"t": t}).fetchall()
+            return len(rows) > 0
+
+        has_clients = _has_table("clients")
+        has_alembic = _has_table("alembic_version")
+
     cfg = Config("/app/alembic.ini")
 
     if not has_clients:
