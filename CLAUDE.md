@@ -135,10 +135,12 @@ Clients that share a repository are linked via the `Repository` model (`/admin` 
 
 ## Seed credentials
 
+Configured via env vars in `docker-compose.yml` (`ADMIN_EMAIL`, `ADMIN_PASSWORD`, `COMERCIAL_EMAIL`, `COMERCIAL_PASSWORD`). No `reader` user is seeded.
+
 | Email | Password | Role |
 |---|---|---|
 | admin@deploy.com | admin123 | admin |
-| reader@deploy.com | reader123 | reader |
+| comercial@deploy.com | comercial123 | comercial |
 
 ## OpenAPI docs
 

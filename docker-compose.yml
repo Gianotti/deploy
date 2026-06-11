@@ -25,6 +25,10 @@ services:
     environment:
       DATABASE_URL: postgresql://deploy_user:deploy_pass@db:5432/deploy_db
       SECRET_KEY: change-me-in-production
+      ADMIN_EMAIL: admin@deploy.com
+      ADMIN_PASSWORD: admin123
+      COMERCIAL_EMAIL: comercial@deploy.com
+      COMERCIAL_PASSWORD: comercial123
     ports:
       - "8000:8000"
     volumes:
