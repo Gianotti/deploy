@@ -128,7 +128,14 @@ function ClientCard({ client }: { client: ClientStatus }) {
           <div className="space-y-1.5">
             {client.ga4_top_pages.map((p, i) => (
               <div key={i} className="flex items-center justify-between gap-3">
-                <span className="text-xs font-mono text-gray-600 dark:text-gray-300 truncate">{p.path}</span>
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <svg className="w-3 h-3 text-gray-400 shrink-0" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <rect x="2" y="1" width="9" height="12" rx="1.5" stroke="currentColor" strokeWidth="1.4"/>
+                    <path d="M8 1v4h4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
+                    <path d="M4.5 8h5M4.5 10.5h3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
+                  </svg>
+                  <span className="text-xs font-mono text-gray-600 dark:text-gray-300 truncate">{p.path}</span>
+                </div>
                 <span className="text-xs font-semibold text-gray-400 shrink-0">{p.users}</span>
               </div>
             ))}
