@@ -34,6 +34,12 @@ def public_teams(db: Session = Depends(get_db)):
     return [PublicTeamOut(id=t.id, name=t.name, deploy_days=t.deploy_days or []) for t in teams]
 
 
+class PublicPromoInfo(BaseModel):
+    description: str | None
+    promo_type: str
+    criticality: int
+
+
 class PublicCalDayClient(BaseModel):
     client_id: int
     client_name: str
@@ -41,6 +47,7 @@ class PublicCalDayClient(BaseModel):
     window_start: str | None
     window_end: str | None
     active_promo_count: int
+    active_promos: list[PublicPromoInfo] = []
 
 
 class PublicCalDay(BaseModel):
@@ -116,6 +123,14 @@ def public_calendar(
                 window_start=w.window_start,
                 window_end=w.window_end,
                 active_promo_count=len(w.active_promotions),
+                active_promos=[
+                    PublicPromoInfo(
+                        description=p.description,
+                        promo_type=p.promo_type.value,
+                        criticality=p.criticality,
+                    )
+                    for p in w.active_promotions
+                ],
             ))
             if _WEIGHT[w.deploy_status] > _WEIGHT[entry["merged_status"]]:
                 entry["merged_status"] = w.deploy_status

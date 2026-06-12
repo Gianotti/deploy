@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { getPublicCalendar, type PublicCalDay, type PublicCalDayClient } from "@/lib/api";
+import { getPublicCalendar, type PublicCalDay, type PublicCalDayClient, type PublicPromoInfo } from "@/lib/api";
 
 const MONTHS_ES = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
 const DAYS_ES   = ["Lun","Mar","Mié","Jue","Vie","Sáb","Dom"];
@@ -244,24 +244,63 @@ function DayDetail({ day, todayStr, onClose }: { day: PublicCalDay; todayStr: st
   );
 }
 
+const PROMO_TYPE_CFG: Record<string, { label: string; bg: string; text: string }> = {
+  PROMO_ESPECIAL: { label: "Especial", bg: "bg-red-100 dark:bg-red-900/30",    text: "text-red-600 dark:text-red-400" },
+  PROMO_NORMAL:   { label: "Normal",   bg: "bg-amber-100 dark:bg-amber-900/30", text: "text-amber-600 dark:text-amber-400" },
+};
+
+function CriticalityDots({ value }: { value: number }) {
+  return (
+    <span className="flex items-center gap-0.5" aria-label={`Criticidad ${value} de 5`}>
+      {Array.from({ length: 5 }).map((_, i) => (
+        <span key={i} className={`w-1.5 h-1.5 rounded-full ${i < value ? "bg-gray-500 dark:bg-gray-400" : "bg-gray-200 dark:bg-gray-700"}`} />
+      ))}
+    </span>
+  );
+}
+
+function PromoLine({ promo }: { promo: PublicPromoInfo }) {
+  const tc = PROMO_TYPE_CFG[promo.promo_type] ?? PROMO_TYPE_CFG.PROMO_NORMAL;
+  return (
+    <div className="flex items-start gap-2 py-1">
+      <span className={`shrink-0 mt-0.5 text-[10px] font-bold px-1.5 py-0.5 rounded ${tc.bg} ${tc.text}`}>
+        {tc.label}
+      </span>
+      <div className="flex-1 min-w-0">
+        <p className="text-xs text-gray-600 dark:text-gray-300 leading-snug">
+          {promo.description || <span className="italic text-gray-400">Sin descripción</span>}
+        </p>
+        <CriticalityDots value={promo.criticality} />
+      </div>
+    </div>
+  );
+}
+
 function ClientRow({ client }: { client: PublicCalDayClient }) {
   const cfg = CLIENT_STATUS_CFG[client.deploy_status] ?? CLIENT_STATUS_CFG.LIBRE;
+  const hasPromos = client.active_promos.length > 0;
+
   return (
-    <div className="px-4 py-2.5 flex items-center justify-between gap-3">
-      <div className="flex items-center gap-2 min-w-0">
-        <span className={`w-2 h-2 rounded-full shrink-0 ${cfg.dot}`} />
-        <span className="text-sm text-gray-700 dark:text-gray-300 truncate font-medium">{client.client_name}</span>
-      </div>
-      <div className="flex items-center gap-2 shrink-0">
+    <div className={`px-4 ${hasPromos ? "py-3" : "py-2.5"}`}>
+      {/* Client header */}
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className={`w-2 h-2 rounded-full shrink-0 ${cfg.dot}`} />
+          <span className="text-sm text-gray-700 dark:text-gray-300 truncate font-semibold">{client.client_name}</span>
+        </div>
         {client.window_start && (
-          <span className="text-xs font-mono text-yellow-500">{client.window_start}–{client.window_end}</span>
-        )}
-        {client.active_promo_count > 0 && (
-          <span className={`text-xs font-semibold ${cfg.text}`}>
-            {client.active_promo_count}p
-          </span>
+          <span className="text-xs font-mono text-yellow-500 shrink-0">{client.window_start}–{client.window_end}</span>
         )}
       </div>
+
+      {/* Promo list */}
+      {hasPromos && (
+        <div className="mt-2 ml-4 pl-2 border-l-2 border-gray-100 dark:border-navy-700 space-y-0.5">
+          {client.active_promos.map((p, i) => (
+            <PromoLine key={i} promo={p} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }

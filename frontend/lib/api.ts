@@ -199,6 +199,12 @@ export async function getPublicTeams(): Promise<PublicTeam[]> {
   return (await api.get<PublicTeam[]>("/public/teams")).data;
 }
 
+export interface PublicPromoInfo {
+  description: string | null;
+  promo_type: string;
+  criticality: number;
+}
+
 export interface PublicCalDayClient {
   client_id: number;
   client_name: string;
@@ -206,6 +212,7 @@ export interface PublicCalDayClient {
   window_start: string | null;
   window_end: string | null;
   active_promo_count: number;
+  active_promos: PublicPromoInfo[];
 }
 
 export interface PublicCalDay {
