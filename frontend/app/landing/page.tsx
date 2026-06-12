@@ -155,6 +155,9 @@ export default function LandingPage() {
   const [error, setError] = useState(false);
   const [ecosystemTotal, setEcosystemTotal] = useState(0);
   const [ecosystemPeak, setEcosystemPeak] = useState(0);
+  const [ecosystemMobilePct, setEcosystemMobilePct] = useState(0);
+  const [ecosystemDesktopPct, setEcosystemDesktopPct] = useState(0);
+  const [ecosystemCR, setEcosystemCR] = useState(0);
 
   const fetchStatus = useCallback(async () => {
     setError(false);
@@ -164,6 +167,9 @@ export default function LandingPage() {
       setGeneratedAt(data.generated_at);
       setEcosystemTotal(data.ecosystem_total ?? 0);
       setEcosystemPeak(data.ecosystem_peak_today ?? 0);
+      setEcosystemMobilePct(data.ecosystem_mobile_pct ?? 0);
+      setEcosystemDesktopPct(data.ecosystem_desktop_pct ?? 0);
+      setEcosystemCR(data.ecosystem_conversion_rate ?? 0);
       setCountdown(REFRESH_SECS);
     } catch { setError(true); }
     finally { setLoading(false); }
@@ -226,7 +232,7 @@ export default function LandingPage() {
 
         {!loading && !error && clients.length > 0 && (
           <div className="space-y-8">
-            <EcosystemBox total={ecosystemTotal} peak={ecosystemPeak} clientCount={clients.length} />
+            <EcosystemBox total={ecosystemTotal} peak={ecosystemPeak} clientCount={clients.length} mobilePct={ecosystemMobilePct} desktopPct={ecosystemDesktopPct} conversionRate={ecosystemCR} />
             <div className="flex gap-4 flex-wrap">
               <Chip count={bloqueado.length}   label="Bloqueados" color="text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/30 border-red-200 dark:border-red-800" />
               <Chip count={restringido.length} label="Con aviso"  color="text-yellow-600 dark:text-yellow-400 bg-yellow-50 dark:bg-yellow-900/30 border-yellow-200 dark:border-yellow-800" />
@@ -244,10 +250,16 @@ export default function LandingPage() {
   );
 }
 
-function EcosystemBox({ total, peak, clientCount }: { total: number; peak: number; clientCount: number }) {
+function EcosystemBox({ total, peak, clientCount, mobilePct, desktopPct, conversionRate }: {
+  total: number; peak: number; clientCount: number;
+  mobilePct: number; desktopPct: number; conversionRate: number;
+}) {
+  const hasDevices = mobilePct > 0 || desktopPct > 0;
+  const hasCR = conversionRate > 0;
+
   return (
     <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-indigo-600 via-blue-600 to-cyan-600 p-px shadow-xl">
-      <div className="rounded-2xl bg-gray-900/90 dark:bg-navy-900/95 px-6 py-5 sm:px-8 sm:py-6">
+      <div className="rounded-2xl bg-gray-900/90 dark:bg-navy-900/95 px-6 py-5 sm:px-8 sm:py-6 space-y-5">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-6">
 
           {/* Label */}
@@ -265,7 +277,7 @@ function EcosystemBox({ total, peak, clientCount }: { total: number; peak: numbe
             <p className="text-gray-400 text-sm mt-0.5">{clientCount} clientes monitoreados</p>
           </div>
 
-          {/* Stats */}
+          {/* Stats principales */}
           <div className="flex items-stretch gap-4 sm:gap-8">
             <div className="text-center">
               <p className="text-gray-400 text-xs uppercase tracking-wide mb-1">Usuarios online ahora</p>
@@ -285,8 +297,43 @@ function EcosystemBox({ total, peak, clientCount }: { total: number; peak: numbe
               <p className="text-indigo-300 text-xs mt-1.5">📈 usuarios</p>
             </div>
           </div>
-
         </div>
+
+        {/* Métricas secundarias */}
+        {(hasDevices || hasCR) && (
+          <div className="flex flex-wrap items-center gap-3 pt-3 border-t border-white/10">
+            {hasDevices && (
+              <>
+                <div className="flex items-center gap-2 bg-white/5 rounded-xl px-4 py-2">
+                  <svg className="w-4 h-4 text-blue-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="5" y="2" width="14" height="20" rx="2"/>
+                    <circle cx="12" cy="17" r="1" fill="currentColor" stroke="none"/>
+                  </svg>
+                  <span className="text-white font-bold text-sm">{mobilePct}%</span>
+                  <span className="text-gray-400 text-xs">mobile</span>
+                </div>
+                <div className="flex items-center gap-2 bg-white/5 rounded-xl px-4 py-2">
+                  <svg className="w-4 h-4 text-indigo-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="2" y="4" width="20" height="14" rx="2"/>
+                    <path d="M8 22h8M12 18v4"/>
+                  </svg>
+                  <span className="text-white font-bold text-sm">{desktopPct}%</span>
+                  <span className="text-gray-400 text-xs">desktop</span>
+                </div>
+              </>
+            )}
+            {hasCR && (
+              <div className="flex items-center gap-2 bg-white/5 rounded-xl px-4 py-2">
+                <svg className="w-4 h-4 text-green-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/>
+                  <polyline points="16 7 22 7 22 13"/>
+                </svg>
+                <span className="text-white font-bold text-sm">{conversionRate}%</span>
+                <span className="text-gray-400 text-xs">conv. rate</span>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

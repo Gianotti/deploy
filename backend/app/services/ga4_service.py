@@ -104,10 +104,17 @@ def get_active_users(credentials_json: str, property_id: str) -> dict:
 
         totals_resp = ga4.run_realtime_report(RunRealtimeReportRequest(
             property=property_id,
-            metrics=[Metric(name="activeUsers"), Metric(name="screenPageViews")],
+            metrics=[
+                Metric(name="activeUsers"),
+                Metric(name="screenPageViews"),
+                Metric(name="conversions"),
+                Metric(name="sessions"),
+            ],
         ))
         total_users = int(totals_resp.rows[0].metric_values[0].value) if totals_resp.rows else 0
         total_views = int(totals_resp.rows[0].metric_values[1].value) if totals_resp.rows else 0
+        total_conversions = int(totals_resp.rows[0].metric_values[2].value) if totals_resp.rows else 0
+        total_sessions = int(totals_resp.rows[0].metric_values[3].value) if totals_resp.rows else 0
 
         # Páginas — opcional
         try:
@@ -147,11 +154,30 @@ def get_active_users(credentials_json: str, property_id: str) -> dict:
         except Exception:
             pass
 
+        # Dispositivos — opcional
+        device_breakdown: dict[str, int] = {"mobile": 0, "tablet": 0, "desktop": 0}
+        try:
+            dev_resp = ga4.run_realtime_report(RunRealtimeReportRequest(
+                property=property_id,
+                dimensions=[Dimension(name="deviceCategory")],
+                metrics=[Metric(name="activeUsers")],
+            ))
+            for row in dev_resp.rows:
+                cat = row.dimension_values[0].value.lower()
+                users = int(row.metric_values[0].value)
+                if cat in device_breakdown:
+                    device_breakdown[cat] = users
+        except Exception:
+            pass
+
         data = {
             "active_users": total_users,
             "page_views": total_views,
+            "conversions": total_conversions,
+            "sessions": total_sessions,
             "top_pages": top_pages,
             "traffic_sources": traffic_sources,
+            "device_breakdown": device_breakdown,
         }
         _result_cache[property_id] = (now, data)
         return data

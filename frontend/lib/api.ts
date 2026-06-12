@@ -171,6 +171,9 @@ export interface ClientStatus {
   ga4_active_users: number | null;
   ga4_top_pages: { path: string; users: number }[];
   ga4_traffic_sources: Record<string, number>;
+  ga4_device_breakdown: Record<string, number>;
+  ga4_conversions: number;
+  ga4_sessions: number;
 }
 
 export interface PublicStatus {
@@ -178,6 +181,9 @@ export interface PublicStatus {
   clients: ClientStatus[];
   ecosystem_total: number;
   ecosystem_peak_today: number;
+  ecosystem_mobile_pct: number;
+  ecosystem_desktop_pct: number;
+  ecosystem_conversion_rate: number;
 }
 
 export async function getPublicStatus(): Promise<PublicStatus> {

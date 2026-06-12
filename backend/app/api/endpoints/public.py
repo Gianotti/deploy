@@ -48,6 +48,9 @@ class ClientStatusOut(BaseModel):
     ga4_active_users: int | None = None
     ga4_top_pages: list[dict] = []
     ga4_traffic_sources: dict[str, int] = {}
+    ga4_device_breakdown: dict[str, int] = {}
+    ga4_conversions: int = 0
+    ga4_sessions: int = 0
 
 
 class PublicStatusOut(BaseModel):
@@ -55,6 +58,9 @@ class PublicStatusOut(BaseModel):
     clients: List[ClientStatusOut]
     ecosystem_total: int = 0
     ecosystem_peak_today: int = 0
+    ecosystem_mobile_pct: float = 0.0
+    ecosystem_desktop_pct: float = 0.0
+    ecosystem_conversion_rate: float = 0.0
 
 
 def _fetch_ga4_for_client(creds: str, client_id: int, property_id: str) -> tuple[int, dict | None]:
@@ -131,6 +137,9 @@ def public_status(db: Session = Depends(get_db)):
                 ga4_active_users=users,
                 ga4_top_pages=ga4_data["top_pages"] if ga4_data else [],
                 ga4_traffic_sources=ga4_data.get("traffic_sources", {}) if ga4_data else {},
+                ga4_device_breakdown=ga4_data.get("device_breakdown", {}) if ga4_data else {},
+                ga4_conversions=ga4_data.get("conversions", 0) if ga4_data else 0,
+                ga4_sessions=ga4_data.get("sessions", 0) if ga4_data else 0,
             )
         )
 
@@ -153,10 +162,24 @@ def public_status(db: Session = Depends(get_db)):
             db.add(IntegrationConfig(key="ecosystem_peak_today", value=payload))
         db.commit()
 
+    eco_mobile = sum(r.ga4_device_breakdown.get("mobile", 0) for r in results)
+    eco_tablet = sum(r.ga4_device_breakdown.get("tablet", 0) for r in results)
+    eco_desktop = sum(r.ga4_device_breakdown.get("desktop", 0) for r in results)
+    eco_device_total = eco_mobile + eco_tablet + eco_desktop
+    eco_mobile_pct = round((eco_mobile + eco_tablet) / eco_device_total * 100, 1) if eco_device_total else 0.0
+    eco_desktop_pct = round(eco_desktop / eco_device_total * 100, 1) if eco_device_total else 0.0
+
+    eco_conversions = sum(r.ga4_conversions for r in results)
+    eco_sessions = sum(r.ga4_sessions for r in results)
+    eco_cr = round(eco_conversions / eco_sessions * 100, 2) if eco_sessions else 0.0
+
     now_utc = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
     return PublicStatusOut(
         generated_at=now_utc,
         clients=results,
         ecosystem_total=ecosystem_total,
         ecosystem_peak_today=tracker.get_ecosystem_peak(),
+        ecosystem_mobile_pct=eco_mobile_pct,
+        ecosystem_desktop_pct=eco_desktop_pct,
+        ecosystem_conversion_rate=eco_cr,
     )
