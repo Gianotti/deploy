@@ -7,7 +7,7 @@ import ClientSelector from "@/components/ClientSelector";
 import DeployCalendar from "@/components/DeployCalendar";
 import StatusBadge from "@/components/StatusBadge";
 import { getDeployWindows, getClients } from "@/lib/api";
-import { exportSingleToExcel, exportAllToExcel } from "@/utils/exportCalendar";
+import { exportSingleToPDF, exportAllToPDF } from "@/utils/exportCalendarPDF";
 import type { Client, DeployWindowDay, DeployStatus, PromoType } from "@/types";
 
 const PROMO_LABEL: Record<PromoType, string> = {
@@ -50,6 +50,7 @@ export default function CalendarPage() {
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
 
   const [loading, setLoading] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [currentMonth, setCurrentMonth] = useState(new Date());
 
   // ── Single mode ──────────────────────────────────────────────────────────────
@@ -127,17 +128,27 @@ export default function CalendarPage() {
 
           {mode === "single" && client && Object.keys(windows).length > 0 && (
             <button
-              onClick={() => exportSingleToExcel(currentMonth, client.name, windows)}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl border border-gray-200 dark:border-navy-700 text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-navy-700 transition">
-              📥 Exportar Excel
+              disabled={exporting}
+              onClick={async () => {
+                setExporting(true);
+                try { await exportSingleToPDF(currentMonth, client.name, windows); }
+                finally { setExporting(false); }
+              }}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl border border-gray-200 dark:border-navy-700 text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-navy-700 transition disabled:opacity-50">
+              {exporting ? "Generando..." : "📄 Exportar PDF"}
             </button>
           )}
 
           {mode === "all" && clientWindows.length > 0 && (
             <button
-              onClick={() => exportAllToExcel(currentMonth, clientWindows)}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl border border-gray-200 dark:border-navy-700 text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-navy-700 transition">
-              📥 Exportar Excel
+              disabled={exporting}
+              onClick={async () => {
+                setExporting(true);
+                try { await exportAllToPDF(currentMonth, clientWindows, mergedWins); }
+                finally { setExporting(false); }
+              }}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl border border-gray-200 dark:border-navy-700 text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-navy-700 transition disabled:opacity-50">
+              {exporting ? "Generando..." : "📄 Exportar PDF"}
             </button>
           )}
         </div>
