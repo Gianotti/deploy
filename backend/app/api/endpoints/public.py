@@ -1,6 +1,7 @@
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import List
+import time
 
 import pytz
 from fastapi import APIRouter, Depends, HTTPException
@@ -57,12 +58,25 @@ class PublicStatusOut(BaseModel):
     ecosystem_peak_today: int = 0
 
 
+# Cache por property_id: evita agotar la quota de la Realtime API (límite ~10 req/min/property).
+# Cada get_active_users hace 2 llamadas → sin cache, 5 refreshes consecutivos ya agota la quota.
+_ga4_cache: dict[str, tuple[float, dict]] = {}
+_GA4_TTL = 45  # segundos
+
+
 def _fetch_ga4_for_client(creds: str, client_id: int, property_id: str) -> tuple[int, dict | None]:
+    now = time.time()
+    cached = _ga4_cache.get(property_id)
+    if cached and now - cached[0] < _GA4_TTL:
+        return client_id, cached[1]
     try:
         from app.services.ga4_service import get_active_users
-        return client_id, get_active_users(creds, property_id)
+        data = get_active_users(creds, property_id)
+        _ga4_cache[property_id] = (now, data)
+        return client_id, data
     except Exception:
-        return client_id, None
+        # Si falla, devuelve datos cacheados aunque sean viejos
+        return client_id, cached[1] if cached else None
 
 
 def _fetch_all_ga4(db: Session, clients: list) -> dict[int, dict]:
