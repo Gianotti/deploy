@@ -660,22 +660,9 @@ function GA4Tab() {
                 </div>
                 {/* Resultado de GA4 */}
                 {rt && rt.active_users >= 0 && (
-                  <div className="ml-44 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-xl px-4 py-3">
-                    <div className="flex items-center gap-4 flex-wrap">
-                      <span className="text-blue-600 dark:text-blue-400 font-bold">👥 {rt.active_users} usuarios activos ahora</span>
-                      <span className="text-gray-400 text-xs">📄 {rt.page_views} page views</span>
-                    </div>
-                    {Object.keys(rt.by_country).length > 0 && (
-                      <div className="flex gap-3 flex-wrap mt-2">
-                        {Object.entries(rt.by_country)
-                          .sort(([, a], [, b]) => b - a)
-                          .map(([country, users]) => (
-                            <span key={country} className="text-xs text-gray-500 dark:text-gray-400">
-                              {country}: <strong className="text-gray-900 dark:text-white">{users}</strong>
-                            </span>
-                          ))}
-                      </div>
-                    )}
+                  <div className="ml-44 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-xl px-4 py-3 flex items-center gap-4 flex-wrap">
+                    <span className="text-blue-600 dark:text-blue-400 font-bold">👥 {rt.active_users} usuarios activos ahora</span>
+                    <span className="text-gray-400 text-xs">📄 {rt.page_views} page views</span>
                   </div>
                 )}
                 {rt && rt.active_users < 0 && (

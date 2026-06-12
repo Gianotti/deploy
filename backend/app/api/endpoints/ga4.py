@@ -25,7 +25,6 @@ class GA4RealtimeOut(BaseModel):
     property_id: str
     active_users: int       # -1 = error
     page_views: int
-    by_country: dict[str, int]
     top_pages: list[dict] = []
     error: str | None = None  # mensaje de error legible si falló
 
@@ -111,7 +110,6 @@ def get_realtime_all(db: Session = Depends(get_db), _=Depends(get_current_user))
                 property_id=client.ga4_property_id,
                 active_users=-1,
                 page_views=0,
-                by_country={},
                 error=_friendly_error(e),
             ))
 

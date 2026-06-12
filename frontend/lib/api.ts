@@ -169,7 +169,6 @@ export interface ClientStatus {
   active_promo_count: number;
   has_logo?: boolean;
   ga4_active_users: number | null;
-  ga4_by_country: Record<string, number>;
   ga4_top_pages: { path: string; users: number }[];
 }
 
@@ -221,7 +220,6 @@ export interface GA4RealtimeData {
   property_id: string;
   active_users: number;   // -1 = error
   page_views: number;
-  by_country: Record<string, number>;
   error: string | null;
 }
 

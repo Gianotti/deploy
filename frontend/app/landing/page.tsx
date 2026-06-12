@@ -33,7 +33,6 @@ const STATUS_CONFIG = {
 
 function ClientCard({ client }: { client: ClientStatus }) {
   const cfg = STATUS_CONFIG[client.deploy_status];
-  const countryEntries = Object.entries(client.ga4_by_country ?? {}).sort(([, a], [, b]) => b - a);
   const logoUrl = `/api/clients/${client.client_id}/logo`;
 
   return (
@@ -84,25 +83,12 @@ function ClientCard({ client }: { client: ClientStatus }) {
         </div>
       )}
 
-      {/* Usuarios activos + desglose por país */}
-      <div className="bg-white dark:bg-navy-900 rounded-xl px-4 py-3 w-full">
-        <div className="flex items-center justify-between mb-1">
-          <p className="text-xs text-gray-400">Usuarios activos ahora</p>
-          {client.ga4_active_users != null && (
-            <p className="text-blue-500 dark:text-blue-400 font-bold text-lg">👥 {client.ga4_active_users}</p>
-          )}
-          {client.ga4_active_users == null && <p className="text-gray-400 font-mono text-sm">—</p>}
-        </div>
-        {countryEntries.length > 0 && (
-          <div className="space-y-1 border-t border-gray-100 dark:border-navy-700 pt-2 mt-1">
-            {countryEntries.map(([country, count]) => (
-              <div key={country} className="flex items-center justify-between text-xs">
-                <span className="text-gray-500 dark:text-gray-400">{country}</span>
-                <span className="font-semibold text-blue-500 dark:text-blue-400">{count}</span>
-              </div>
-            ))}
-          </div>
-        )}
+      {/* Usuarios activos */}
+      <div className="bg-white dark:bg-navy-900 rounded-xl px-4 py-3 w-full flex items-center justify-between">
+        <p className="text-xs text-gray-400">Usuarios activos ahora</p>
+        {client.ga4_active_users != null
+          ? <p className="text-blue-500 dark:text-blue-400 font-bold text-lg">👥 {client.ga4_active_users}</p>
+          : <p className="text-gray-400 font-mono text-sm">—</p>}
       </div>
 
       {/* Top 3 URLs */}

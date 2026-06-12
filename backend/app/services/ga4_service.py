@@ -12,7 +12,7 @@ import time
 from google.analytics.data_v1beta import BetaAnalyticsDataClient
 from google.analytics.data_v1beta.types import (
     RunRealtimeReportRequest,
-    Dimension,
+    Dimension,  # still used by top_pages query
     Metric,
 )
 from google.oauth2 import service_account, credentials as oauth2_credentials
@@ -102,22 +102,12 @@ def get_active_users(credentials_json: str, property_id: str) -> dict:
     try:
         ga4 = get_ga4_client(credentials_json)
 
-        country_resp = ga4.run_realtime_report(RunRealtimeReportRequest(
+        totals_resp = ga4.run_realtime_report(RunRealtimeReportRequest(
             property=property_id,
-            dimensions=[Dimension(name="country")],
             metrics=[Metric(name="activeUsers"), Metric(name="screenPageViews")],
         ))
-
-        total_users = 0
-        total_views = 0
-        by_country: dict[str, int] = {}
-        for row in country_resp.rows:
-            country = row.dimension_values[0].value
-            users = int(row.metric_values[0].value)
-            views = int(row.metric_values[1].value)
-            total_users += users
-            total_views += views
-            by_country[country] = users
+        total_users = int(totals_resp.rows[0].metric_values[0].value) if totals_resp.rows else 0
+        total_views = int(totals_resp.rows[0].metric_values[1].value) if totals_resp.rows else 0
 
         # Query de páginas es opcional — properties de alto tráfico o app-properties
         # pueden fallar aquí sin afectar el dato principal de usuarios activos.
@@ -138,7 +128,6 @@ def get_active_users(credentials_json: str, property_id: str) -> dict:
         data = {
             "active_users": total_users,
             "page_views": total_views,
-            "by_country": by_country,
             "top_pages": top_pages,
         }
         _result_cache[property_id] = (now, data)

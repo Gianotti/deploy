@@ -46,7 +46,6 @@ class ClientStatusOut(BaseModel):
     active_promo_count: int
     has_logo: bool = False
     ga4_active_users: int | None = None
-    ga4_by_country: dict[str, int] = {}
     ga4_top_pages: list[dict] = []
 
 
@@ -129,7 +128,6 @@ def public_status(db: Session = Depends(get_db)):
                 active_promo_count=len(active),
                 has_logo=client.logo_data is not None,
                 ga4_active_users=users,
-                ga4_by_country=ga4_data["by_country"] if ga4_data else {},
                 ga4_top_pages=ga4_data["top_pages"] if ga4_data else [],
             )
         )
