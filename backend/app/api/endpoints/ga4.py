@@ -26,7 +26,6 @@ class GA4RealtimeOut(BaseModel):
     active_users: int       # -1 = error
     page_views: int
     conversions: int = 0
-    sessions: int = 0
     top_pages: list[dict] = []
     traffic_sources: dict[str, int] = {}
     device_breakdown: dict[str, int] = {}

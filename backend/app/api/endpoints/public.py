@@ -50,7 +50,6 @@ class ClientStatusOut(BaseModel):
     ga4_traffic_sources: dict[str, int] = {}
     ga4_device_breakdown: dict[str, int] = {}
     ga4_conversions: int = 0
-    ga4_sessions: int = 0
 
 
 class PublicStatusOut(BaseModel):
@@ -139,7 +138,6 @@ def public_status(db: Session = Depends(get_db)):
                 ga4_traffic_sources=ga4_data.get("traffic_sources", {}) if ga4_data else {},
                 ga4_device_breakdown=ga4_data.get("device_breakdown", {}) if ga4_data else {},
                 ga4_conversions=ga4_data.get("conversions", 0) if ga4_data else 0,
-                ga4_sessions=ga4_data.get("sessions", 0) if ga4_data else 0,
             )
         )
 
@@ -170,8 +168,7 @@ def public_status(db: Session = Depends(get_db)):
     eco_desktop_pct = round(eco_desktop / eco_device_total * 100, 1) if eco_device_total else 0.0
 
     eco_conversions = sum(r.ga4_conversions for r in results)
-    eco_sessions = sum(r.ga4_sessions for r in results)
-    eco_cr = round(eco_conversions / eco_sessions * 100, 2) if eco_sessions else 0.0
+    eco_cr = round(eco_conversions / ecosystem_total * 100, 2) if ecosystem_total else 0.0
 
     now_utc = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
     return PublicStatusOut(

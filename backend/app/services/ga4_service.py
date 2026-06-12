@@ -107,14 +107,12 @@ def get_active_users(credentials_json: str, property_id: str) -> dict:
             metrics=[
                 Metric(name="activeUsers"),
                 Metric(name="screenPageViews"),
-                Metric(name="conversions"),
-                Metric(name="sessions"),
+                Metric(name="keyEvents"),
             ],
         ))
         total_users = int(totals_resp.rows[0].metric_values[0].value) if totals_resp.rows else 0
         total_views = int(totals_resp.rows[0].metric_values[1].value) if totals_resp.rows else 0
         total_conversions = int(totals_resp.rows[0].metric_values[2].value) if totals_resp.rows else 0
-        total_sessions = int(totals_resp.rows[0].metric_values[3].value) if totals_resp.rows else 0
 
         # Páginas — opcional
         try:
@@ -174,7 +172,6 @@ def get_active_users(credentials_json: str, property_id: str) -> dict:
             "active_users": total_users,
             "page_views": total_views,
             "conversions": total_conversions,
-            "sessions": total_sessions,
             "top_pages": top_pages,
             "traffic_sources": traffic_sources,
             "device_breakdown": device_breakdown,

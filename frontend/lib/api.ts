@@ -173,7 +173,6 @@ export interface ClientStatus {
   ga4_traffic_sources: Record<string, number>;
   ga4_device_breakdown: Record<string, number>;
   ga4_conversions: number;
-  ga4_sessions: number;
 }
 
 export interface PublicStatus {
