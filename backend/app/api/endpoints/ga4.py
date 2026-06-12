@@ -41,7 +41,9 @@ def _friendly_error(e: Exception) -> str:
         return "Sin acceso a esta propiedad — verificá que el SA/cuenta tenga rol Viewer en GA4"
     if "404" in msg or "not found" in msg.lower():
         return "Property ID no encontrado — verificá el número en GA4 → Admin → Property Settings"
-    if "invalid_grant" in msg or "token" in msg.lower():
+    if "429" in msg or "quota" in msg.lower() or "resource_exhausted" in msg.lower():
+        return "Quota de la API excedida — esperá unos segundos y refrescá"
+    if "invalid_grant" in msg:
         return "Token expirado o inválido — regenerá el Refresh Token en el OAuth Playground"
     return f"Error de API: {msg[:120]}"
 

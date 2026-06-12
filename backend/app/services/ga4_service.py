@@ -6,6 +6,7 @@ Soporta dos métodos de autenticación:
 """
 
 import json
+import threading
 
 from google.analytics.data_v1beta import BetaAnalyticsDataClient
 from google.analytics.data_v1beta.types import (
@@ -18,11 +19,28 @@ from google.auth.transport.requests import Request
 
 GA4_SCOPES = ["https://www.googleapis.com/auth/analytics.readonly"]
 
+# ── Cache de clientes ─────────────────────────────────────────────────────────
+# Evita crear un cliente nuevo por cada property en cada refresh.
+# Para OAuth: reutiliza las credenciales y solo refresca el token cuando expira,
+# en lugar de llamar a creds.refresh() N veces en paralelo (que causa errores).
+
+_lock = threading.Lock()
+_sa_client: BetaAnalyticsDataClient | None = None
+_sa_creds_key: str | None = None          # hash de las credenciales SA actuales
+
+_oauth_creds: oauth2_credentials.Credentials | None = None
+_oauth_creds_key: str | None = None       # hash de las credenciales OAuth actuales
+
 
 def _client_from_service_account(credentials_json: str) -> BetaAnalyticsDataClient:
-    info = json.loads(credentials_json)
-    creds = service_account.Credentials.from_service_account_info(info, scopes=GA4_SCOPES)
-    return BetaAnalyticsDataClient(credentials=creds)
+    global _sa_client, _sa_creds_key
+    with _lock:
+        if _sa_creds_key != credentials_json or _sa_client is None:
+            info = json.loads(credentials_json)
+            creds = service_account.Credentials.from_service_account_info(info, scopes=GA4_SCOPES)
+            _sa_client = BetaAnalyticsDataClient(credentials=creds)
+            _sa_creds_key = credentials_json
+        return _sa_client
 
 
 def _client_from_oauth(credentials_json: str) -> BetaAnalyticsDataClient:
@@ -34,18 +52,27 @@ def _client_from_oauth(credentials_json: str) -> BetaAnalyticsDataClient:
       "client_secret": "...",
       "refresh_token": "..."
     }
+    El token de acceso se refresca automáticamente cuando expira.
+    Solo un thread a la vez puede refrescar (evita llamadas paralelas al endpoint OAuth).
     """
-    info = json.loads(credentials_json)
-    creds = oauth2_credentials.Credentials(
-        token=None,
-        refresh_token=info["refresh_token"],
-        client_id=info["client_id"],
-        client_secret=info["client_secret"],
-        token_uri="https://oauth2.googleapis.com/token",
-        scopes=GA4_SCOPES,
-    )
-    creds.refresh(Request())
-    return BetaAnalyticsDataClient(credentials=creds)
+    global _oauth_creds, _oauth_creds_key
+    with _lock:
+        if _oauth_creds_key != credentials_json or _oauth_creds is None:
+            info = json.loads(credentials_json)
+            _oauth_creds = oauth2_credentials.Credentials(
+                token=None,
+                refresh_token=info["refresh_token"],
+                client_id=info["client_id"],
+                client_secret=info["client_secret"],
+                token_uri="https://oauth2.googleapis.com/token",
+                scopes=GA4_SCOPES,
+            )
+            _oauth_creds_key = credentials_json
+
+        if not _oauth_creds.valid:
+            _oauth_creds.refresh(Request())
+
+        return BetaAnalyticsDataClient(credentials=_oauth_creds)
 
 
 def get_ga4_client(credentials_json: str) -> BetaAnalyticsDataClient:
