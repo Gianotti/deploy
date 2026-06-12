@@ -1,9 +1,10 @@
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime
+from datetime import datetime, date, timedelta
 from typing import List
+import calendar as _cal
 
 import pytz
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -31,6 +32,106 @@ def public_teams(db: Session = Depends(get_db)):
     from app.models.team import Team
     teams = db.query(Team).all()
     return [PublicTeamOut(id=t.id, name=t.name, deploy_days=t.deploy_days or []) for t in teams]
+
+
+class PublicCalDayClient(BaseModel):
+    client_id: int
+    client_name: str
+    deploy_status: str
+    window_start: str | None
+    window_end: str | None
+    active_promo_count: int
+
+
+class PublicCalDay(BaseModel):
+    date: str
+    merged_status: str
+    active_client_count: int
+    total_promo_count: int
+    clients: list[PublicCalDayClient]
+
+
+class PublicCalendarOut(BaseModel):
+    year: int
+    month: int
+    days: list[PublicCalDay]
+
+
+@router.get("/calendar", response_model=PublicCalendarOut)
+def public_calendar(
+    year: int = Query(default=None),
+    month: int = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    from app.rules.engine import compute_windows
+
+    today = date.today()
+    y = year if year is not None else today.year
+    m = month if month is not None else today.month
+    if not (1 <= m <= 12):
+        raise HTTPException(400, "month must be 1–12")
+
+    first_day = date(y, m, 1)
+    last_day = date(y, m, _cal.monthrange(y, m)[1])
+
+    _WEIGHT = {DeployStatus.LIBRE: 0, DeployStatus.RESTRINGIDO: 1, DeployStatus.BLOQUEADO: 2}
+
+    clients = db.query(Client).all()
+    rules = db.query(DeployRule).all()
+
+    day_map: dict[str, dict] = {}
+    d = first_day
+    while d <= last_day:
+        day_map[d.isoformat()] = {"merged_status": DeployStatus.LIBRE, "clients": []}
+        d += timedelta(days=1)
+
+    for client in clients:
+        repos = db.query(Repository).filter(
+            Repository.clients.any(Client.id == client.id)
+        ).all()
+        all_ids = {client.id}
+        for repo in repos:
+            for c in repo.clients:
+                all_ids.add(c.id)
+
+        promotions = (
+            db.query(Promotion)
+            .filter(
+                Promotion.client_id.in_(list(all_ids)),
+                Promotion.end_date >= first_day,
+                Promotion.start_date <= last_day,
+            )
+            .all()
+        )
+
+        windows = compute_windows(client.id, promotions, rules, first_day, last_day)
+
+        for w in windows:
+            key = w.date.isoformat()
+            entry = day_map[key]
+            entry["clients"].append(PublicCalDayClient(
+                client_id=client.id,
+                client_name=client.name,
+                deploy_status=w.deploy_status.value,
+                window_start=w.window_start,
+                window_end=w.window_end,
+                active_promo_count=len(w.active_promotions),
+            ))
+            if _WEIGHT[w.deploy_status] > _WEIGHT[entry["merged_status"]]:
+                entry["merged_status"] = w.deploy_status
+
+    days = sorted([
+        PublicCalDay(
+            date=k,
+            merged_status=v["merged_status"].value,
+            active_client_count=sum(1 for c in v["clients"] if c.active_promo_count > 0),
+            total_promo_count=sum(c.active_promo_count for c in v["clients"]),
+            clients=v["clients"],
+        )
+        for k, v in day_map.items()
+    ], key=lambda x: x.date)
+
+    return PublicCalendarOut(year=y, month=m, days=days)
 
 
 def _linked_client_ids(client_id: int, db) -> list[int]:

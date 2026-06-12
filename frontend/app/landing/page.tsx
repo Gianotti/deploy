@@ -3,6 +3,7 @@
 import Image from "next/image";
 import { useEffect, useState, useCallback } from "react";
 import { getPublicStatus, getPublicTeams, type ClientStatus, type PublicTeam } from "@/lib/api";
+import PublicMonthCalendar from "@/components/PublicMonthCalendar";
 import { useTheme } from "@/lib/theme";
 import ClientAvatar from "@/components/ClientAvatar";
 
@@ -390,6 +391,11 @@ export default function LandingPage() {
             {/* Weekly deploy calendar */}
             <div className="bg-white dark:bg-navy-800 rounded-2xl border border-gray-200 dark:border-navy-700 p-6 shadow-sm dark:shadow-none">
               <WeeklyCalendar teams={teams} />
+            </div>
+
+            {/* Monthly restrictions calendar — for cloud/infra scaling planning */}
+            <div className="bg-white dark:bg-navy-800 rounded-2xl border border-gray-200 dark:border-navy-700 p-6 shadow-sm dark:shadow-none">
+              <PublicMonthCalendar />
             </div>
           </div>
         )}

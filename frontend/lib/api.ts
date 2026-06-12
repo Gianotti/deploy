@@ -199,6 +199,33 @@ export async function getPublicTeams(): Promise<PublicTeam[]> {
   return (await api.get<PublicTeam[]>("/public/teams")).data;
 }
 
+export interface PublicCalDayClient {
+  client_id: number;
+  client_name: string;
+  deploy_status: string;
+  window_start: string | null;
+  window_end: string | null;
+  active_promo_count: number;
+}
+
+export interface PublicCalDay {
+  date: string;
+  merged_status: string;
+  active_client_count: number;
+  total_promo_count: number;
+  clients: PublicCalDayClient[];
+}
+
+export interface PublicCalendar {
+  year: number;
+  month: number;
+  days: PublicCalDay[];
+}
+
+export async function getPublicCalendar(year: number, month: number): Promise<PublicCalendar> {
+  return (await api.get<PublicCalendar>("/public/calendar", { params: { year, month } })).data;
+}
+
 export async function getTodayStatus(clientId: number): Promise<TodayStatusResponse> {
   return (await api.get<TodayStatusResponse>("/deploy-status/today", {
     params: { client_id: clientId },
