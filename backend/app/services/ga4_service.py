@@ -7,6 +7,7 @@ Soporta dos métodos de autenticación:
 
 import json
 import threading
+import time
 
 from google.analytics.data_v1beta import BetaAnalyticsDataClient
 from google.analytics.data_v1beta.types import (
@@ -30,6 +31,11 @@ _sa_creds_key: str | None = None          # hash de las credenciales SA actuales
 
 _oauth_creds: oauth2_credentials.Credentials | None = None
 _oauth_creds_key: str | None = None       # hash de las credenciales OAuth actuales
+
+# Cache de resultados por property_id  →  (timestamp, data)
+# Evita quota excedida en refreshes rápidos y sirve datos previos ante errores transitorios.
+_result_cache: dict[str, tuple[float, dict]] = {}
+_CACHE_TTL = 45  # segundos
 
 
 def _client_from_service_account(credentials_json: str) -> BetaAnalyticsDataClient:
@@ -86,39 +92,56 @@ def get_active_users(credentials_json: str, property_id: str) -> dict:
     if not property_id.startswith("properties/"):
         property_id = f"properties/{property_id}"
 
-    ga4 = get_ga4_client(credentials_json)
+    now = time.time()
+    cached = _result_cache.get(property_id)
 
-    country_resp = ga4.run_realtime_report(RunRealtimeReportRequest(
-        property=property_id,
-        dimensions=[Dimension(name="country")],
-        metrics=[Metric(name="activeUsers"), Metric(name="screenPageViews")],
-    ))
+    # Devuelve cache si es reciente
+    if cached and now - cached[0] < _CACHE_TTL:
+        return cached[1]
 
-    total_users = 0
-    total_views = 0
-    by_country: dict[str, int] = {}
-    for row in country_resp.rows:
-        country = row.dimension_values[0].value
-        users = int(row.metric_values[0].value)
-        views = int(row.metric_values[1].value)
-        total_users += users
-        total_views += views
-        by_country[country] = users
+    try:
+        ga4 = get_ga4_client(credentials_json)
 
-    pages_resp = ga4.run_realtime_report(RunRealtimeReportRequest(
-        property=property_id,
-        dimensions=[Dimension(name="unifiedScreenName")],
-        metrics=[Metric(name="activeUsers")],
-        limit=3,
-    ))
-    top_pages = [
-        {"path": row.dimension_values[0].value, "users": int(row.metric_values[0].value)}
-        for row in pages_resp.rows
-    ]
+        country_resp = ga4.run_realtime_report(RunRealtimeReportRequest(
+            property=property_id,
+            dimensions=[Dimension(name="country")],
+            metrics=[Metric(name="activeUsers"), Metric(name="screenPageViews")],
+        ))
 
-    return {
-        "active_users": total_users,
-        "page_views": total_views,
-        "by_country": by_country,
-        "top_pages": top_pages,
-    }
+        total_users = 0
+        total_views = 0
+        by_country: dict[str, int] = {}
+        for row in country_resp.rows:
+            country = row.dimension_values[0].value
+            users = int(row.metric_values[0].value)
+            views = int(row.metric_values[1].value)
+            total_users += users
+            total_views += views
+            by_country[country] = users
+
+        pages_resp = ga4.run_realtime_report(RunRealtimeReportRequest(
+            property=property_id,
+            dimensions=[Dimension(name="unifiedScreenName")],
+            metrics=[Metric(name="activeUsers")],
+            limit=3,
+        ))
+        top_pages = [
+            {"path": row.dimension_values[0].value, "users": int(row.metric_values[0].value)}
+            for row in pages_resp.rows
+        ]
+
+        data = {
+            "active_users": total_users,
+            "page_views": total_views,
+            "by_country": by_country,
+            "top_pages": top_pages,
+        }
+        _result_cache[property_id] = (now, data)
+        return data
+
+    except Exception:
+        # Ante cualquier error transitorio (quota, red, token temporal),
+        # devuelve el último dato conocido si existe — sin mostrar error al usuario.
+        if cached:
+            return cached[1]
+        raise
