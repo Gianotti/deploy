@@ -8,6 +8,7 @@ import {
   getClients, createClient, deleteClient, updateClientGA4, uploadClientLogo, deleteClientLogo,
   getDeployRules, createDeployRule, deleteDeployRule,
   getNotificationConfig, saveNotificationConfig, sendNotificationNow,
+  getBackendPublicUrl, saveBackendPublicUrl,
   getGA4CredentialsStatus, saveGA4Credentials, deleteGA4Credentials, getGA4Realtime,
   getRepositories, createRepository, deleteRepository, addClientToRepository, removeClientFromRepository,
   getTeams, createTeam, updateTeam, deleteTeam, addTeamChannel, removeTeamChannel,
@@ -405,10 +406,24 @@ function NotificationsTab() {
   const [sending, setSending] = useState(false);
   const [msg, setMsg] = useState("");
   const [error, setError] = useState("");
+  const [backendUrl, setBackendUrl] = useState("");
+  const [savingUrl, setSavingUrl] = useState(false);
+  const [urlMsg, setUrlMsg] = useState("");
 
   useEffect(() => {
     getNotificationConfig().then(setConfig).catch(() => setConfig({ id: 1, webhook_url: "", time_1: null, time_2: null, time_3: null, is_active: false }));
+    getBackendPublicUrl().then(r => setBackendUrl(r.url)).catch(() => {});
   }, []);
+
+  async function handleSaveUrl() {
+    setSavingUrl(true);
+    try {
+      const r = await saveBackendPublicUrl(backendUrl);
+      setBackendUrl(r.url);
+      setUrlMsg("URL guardada ✅");
+    } catch { setUrlMsg("Error al guardar"); }
+    finally { setSavingUrl(false); setTimeout(() => setUrlMsg(""), 3000); }
+  }
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
@@ -478,6 +493,33 @@ function NotificationsTab() {
           </button>
         </div>
       </form>
+
+      {/* URL pública del backend — necesaria para que los GIFs aparezcan en mensajes */}
+      <div className="card p-6 space-y-4">
+        <div>
+          <h2 className="font-semibold text-gray-900 dark:text-white">URL pública del backend</h2>
+          <p className="text-xs text-gray-400 mt-1">Necesaria para que los GIFs configurados en los equipos aparezcan en los mensajes de Google Chat. Debe ser accesible desde Internet.</p>
+        </div>
+        <div className="flex gap-2 items-end">
+          <div className="flex-1">
+            <label className="field-label">URL base del backend</label>
+            <input className="field font-mono text-sm" type="url"
+              placeholder="https://tu-dominio.com o http://ip:8040"
+              value={backendUrl}
+              onChange={e => setBackendUrl(e.target.value)} />
+          </div>
+          <button onClick={handleSaveUrl} disabled={savingUrl}
+            className="btn-primary flex-shrink-0 disabled:opacity-50">
+            {savingUrl ? "..." : "Guardar"}
+          </button>
+        </div>
+        {urlMsg && <p className={`text-sm ${urlMsg.startsWith("Error") ? "text-red-500" : "text-green-500"}`}>{urlMsg}</p>}
+        {!backendUrl && (
+          <p className="text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 rounded-lg px-3 py-2">
+            ⚠ Sin URL configurada los GIFs no se enviarán en las notificaciones — solo se enviará el texto del mensaje.
+          </p>
+        )}
+      </div>
     </div>
   );
 }

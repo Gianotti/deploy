@@ -213,6 +213,14 @@ export async function sendNotificationNow(): Promise<{ sent: boolean; message: s
   return (await api.post("/notifications/send-now")).data;
 }
 
+export async function getBackendPublicUrl(): Promise<{ url: string }> {
+  return (await api.get("/notifications/backend-url")).data;
+}
+
+export async function saveBackendPublicUrl(url: string): Promise<{ url: string }> {
+  return (await api.post("/notifications/backend-url", { url })).data;
+}
+
 // ── GA4 ──────────────────────────────────────────────────────────────────────
 
 export interface GA4RealtimeData {
