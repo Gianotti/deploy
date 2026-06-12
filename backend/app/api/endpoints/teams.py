@@ -1,7 +1,6 @@
 import requests
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
-from fastapi.responses import Response
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user, require_admin
@@ -15,8 +14,6 @@ from app.schemas.team import (
 )
 
 router = APIRouter(prefix="/teams", tags=["teams"])
-
-_ALLOWED_GIF_TYPES = {"image/gif", "image/png", "image/jpeg", "image/webp"}
 
 
 def _team_out(team: Team) -> TeamOut:
@@ -153,44 +150,6 @@ def delete_slot(team_id: int, slot_id: int, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(team)
     _rebuild(team)
-    return _team_out(team)
-
-
-# ── GIF por slot ──────────────────────────────────────────────────────────────
-
-@router.post("/{team_id}/slots/{slot_id}/gif", response_model=TeamOut, dependencies=[Depends(require_admin)])
-async def upload_gif(
-    team_id: int,
-    slot_id: int,
-    file: UploadFile = File(...),
-    db: Session = Depends(get_db),
-):
-    if file.content_type not in _ALLOWED_GIF_TYPES:
-        raise HTTPException(400, f"Tipo de archivo no permitido: {file.content_type}. Usá GIF, PNG, JPG o WEBP.")
-    slot = db.get(TeamNotificationSlot, slot_id)
-    if not slot or slot.team_id != team_id:
-        raise HTTPException(404, "Slot no encontrado")
-    data = await file.read()
-    if len(data) > 8 * 1024 * 1024:
-        raise HTTPException(400, "El archivo no puede superar 8 MB")
-    slot.gif_data = data
-    slot.gif_filename = file.filename
-    db.commit()
-    team = db.get(Team, team_id)
-    db.refresh(team)
-    return _team_out(team)
-
-
-@router.delete("/{team_id}/slots/{slot_id}/gif", response_model=TeamOut, dependencies=[Depends(require_admin)])
-def delete_gif(team_id: int, slot_id: int, db: Session = Depends(get_db)):
-    slot = db.get(TeamNotificationSlot, slot_id)
-    if not slot or slot.team_id != team_id:
-        raise HTTPException(404, "Slot no encontrado")
-    slot.gif_data = None
-    slot.gif_filename = None
-    db.commit()
-    team = db.get(Team, team_id)
-    db.refresh(team)
     return _team_out(team)
 
 

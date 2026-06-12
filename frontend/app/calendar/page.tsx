@@ -7,6 +7,7 @@ import ClientSelector from "@/components/ClientSelector";
 import DeployCalendar from "@/components/DeployCalendar";
 import StatusBadge from "@/components/StatusBadge";
 import { getDeployWindows, getClients } from "@/lib/api";
+import { exportSingleToExcel, exportAllToExcel } from "@/utils/exportCalendar";
 import type { Client, DeployWindowDay, DeployStatus, PromoType } from "@/types";
 
 const PROMO_LABEL: Record<PromoType, string> = {
@@ -49,10 +50,12 @@ export default function CalendarPage() {
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
 
   const [loading, setLoading] = useState(false);
+  const [currentMonth, setCurrentMonth] = useState(new Date());
 
   // ── Single mode ──────────────────────────────────────────────────────────────
 
   async function fetchSingle(c: Client, month: Date) {
+    setCurrentMonth(month);
     setLoading(true);
     const from = format(startOfMonth(month), "yyyy-MM-dd");
     const to   = format(endOfMonth(month),   "yyyy-MM-dd");
@@ -72,6 +75,7 @@ export default function CalendarPage() {
   // ── All-clients mode ──────────────────────────────────────────────────────────
 
   const fetchAll = useCallback(async (month: Date) => {
+    setCurrentMonth(month);
     setLoading(true);
     const from = format(startOfMonth(month), "yyyy-MM-dd");
     const to   = format(endOfMonth(month),   "yyyy-MM-dd");
@@ -108,16 +112,34 @@ export default function CalendarPage() {
           <p className="text-gray-500 dark:text-gray-400 text-sm">Verde = libre · Amarillo = con aviso · Rojo = bloqueado</p>
         </div>
 
-        {/* Mode toggle */}
-        <div className="flex items-center gap-1 p-1 bg-gray-100 dark:bg-navy-800 border border-gray-200 dark:border-navy-700 rounded-xl w-fit">
-          {(["single", "all"] as Mode[]).map((m) => (
-            <button key={m} onClick={() => handleModeChange(m)}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition whitespace-nowrap ${
-                mode === m ? "bg-accent text-white shadow-sm" : "text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white"
-              }`}>
-              {m === "single" ? "📅 Por cliente" : "🌐 Todos los clientes"}
+        {/* Mode toggle + export */}
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="flex items-center gap-1 p-1 bg-gray-100 dark:bg-navy-800 border border-gray-200 dark:border-navy-700 rounded-xl">
+            {(["single", "all"] as Mode[]).map((m) => (
+              <button key={m} onClick={() => handleModeChange(m)}
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition whitespace-nowrap ${
+                  mode === m ? "bg-accent text-white shadow-sm" : "text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white"
+                }`}>
+                {m === "single" ? "📅 Por cliente" : "🌐 Todos los clientes"}
+              </button>
+            ))}
+          </div>
+
+          {mode === "single" && client && Object.keys(windows).length > 0 && (
+            <button
+              onClick={() => exportSingleToExcel(currentMonth, client.name, windows)}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl border border-gray-200 dark:border-navy-700 text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-navy-700 transition">
+              📥 Exportar Excel
             </button>
-          ))}
+          )}
+
+          {mode === "all" && clientWindows.length > 0 && (
+            <button
+              onClick={() => exportAllToExcel(currentMonth, clientWindows)}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl border border-gray-200 dark:border-navy-700 text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-navy-700 transition">
+              📥 Exportar Excel
+            </button>
+          )}
         </div>
 
         {/* ── Single mode ── */}

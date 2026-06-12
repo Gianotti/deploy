@@ -29,6 +29,21 @@ async def lifespan(app: FastAPI):
 
     rebuild_all_team_jobs()
 
+    # Restaurar el pico de usuarios del día desde la DB
+    from app.models.integration_config import IntegrationConfig
+    from app.services import tracker
+    import json
+    db2 = SessionLocal()
+    try:
+        row = db2.query(IntegrationConfig).filter(IntegrationConfig.key == "ecosystem_peak_today").first()
+        if row:
+            data = json.loads(row.value)
+            tracker.set_peak_state(data["date"], data["peak"])
+    except Exception:
+        pass
+    finally:
+        db2.close()
+
     yield
 
     scheduler.shutdown(wait=False)

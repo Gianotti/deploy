@@ -1,40 +1,6 @@
 """Envío de notificaciones de equipo a webhooks de Google Chat."""
 
 import requests
-from app.core.config import settings
-
-
-def _get_backend_url() -> str:
-    """Reads backend public URL from DB (IntegrationConfig), falls back to env var."""
-    from app.db.base import SessionLocal
-    from app.models.integration_config import IntegrationConfig
-    db = SessionLocal()
-    try:
-        cfg = db.query(IntegrationConfig).filter(IntegrationConfig.key == "backend_public_url").first()
-        if cfg and cfg.value:
-            return cfg.value.rstrip("/")
-    finally:
-        db.close()
-    return settings.BACKEND_PUBLIC_URL.rstrip("/")
-
-
-def _build_payload(message: str, slot_id: int, has_gif: bool) -> dict:
-    """Construye el payload para el webhook. Usa card si hay GIF, text simple si no."""
-    if has_gif:
-        base_url = _get_backend_url()
-        if base_url:
-            gif_url = f"{base_url}/public/team-gif/{slot_id}"
-            return {
-                "cards": [{
-                    "sections": [{
-                        "widgets": [
-                            {"image": {"imageUrl": gif_url}},
-                            {"textParagraph": {"text": message}},
-                        ]
-                    }]
-                }]
-            }
-    return {"text": message}
 
 
 def send_slot(team, slot, force_ok: bool = False) -> list[str]:
@@ -47,7 +13,7 @@ def send_slot(team, slot, force_ok: bool = False) -> list[str]:
     if not message:
         return []
 
-    payload = _build_payload(message, slot.id, slot.gif_data is not None)
+    payload = {"text": message}
     errors = []
     for channel in team.channels:
         try:

@@ -20,8 +20,6 @@ class TeamNotificationSlotIn(BaseModel):
 
 class TeamNotificationSlotOut(TeamNotificationSlotIn):
     id: int
-    has_gif: bool = False
-    gif_filename: str | None = None
     model_config = {"from_attributes": True}
 
     @classmethod
@@ -32,8 +30,6 @@ class TeamNotificationSlotOut(TeamNotificationSlotIn):
             time=slot.time,
             message_ok=slot.message_ok,
             message_blocked=slot.message_blocked,
-            has_gif=slot.gif_data is not None,
-            gif_filename=slot.gif_filename,
         )
 
 

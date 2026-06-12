@@ -4,7 +4,6 @@ from typing import List
 
 import pytz
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -139,7 +138,20 @@ def public_status(db: Session = Depends(get_db)):
     results.sort(key=lambda r: weight[r.deploy_status])
 
     ecosystem_total = sum(r.ga4_active_users for r in results if r.ga4_active_users is not None)
-    tracker.update_ecosystem_peak(ecosystem_total)
+    peak_changed = tracker.update_ecosystem_peak(ecosystem_total)
+
+    if peak_changed:
+        import json
+        peak_val = tracker.get_ecosystem_peak()
+        from datetime import timezone as _tz
+        today_str = datetime.now(_tz.utc).strftime("%Y-%m-%d")
+        payload = json.dumps({"date": today_str, "peak": peak_val})
+        cfg = db.query(IntegrationConfig).filter(IntegrationConfig.key == "ecosystem_peak_today").first()
+        if cfg:
+            cfg.value = payload
+        else:
+            db.add(IntegrationConfig(key="ecosystem_peak_today", value=payload))
+        db.commit()
 
     now_utc = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
     return PublicStatusOut(
@@ -148,23 +160,3 @@ def public_status(db: Session = Depends(get_db)):
         ecosystem_total=ecosystem_total,
         ecosystem_peak_today=tracker.get_ecosystem_peak(),
     )
-
-
-@router.get("/team-gif/{slot_id}")
-def get_team_gif(slot_id: int, db: Session = Depends(get_db)):
-    """Sirve el GIF/imagen de un slot de notificación de equipo (sin autenticación)."""
-    from app.models.team import TeamNotificationSlot
-    slot = db.get(TeamNotificationSlot, slot_id)
-    if not slot or not slot.gif_data:
-        raise HTTPException(404, "GIF no encontrado")
-    # Detect content type from filename extension
-    fname = (slot.gif_filename or "").lower()
-    if fname.endswith(".gif"):
-        media_type = "image/gif"
-    elif fname.endswith(".png"):
-        media_type = "image/png"
-    elif fname.endswith(".webp"):
-        media_type = "image/webp"
-    else:
-        media_type = "image/jpeg"
-    return Response(content=slot.gif_data, media_type=media_type)

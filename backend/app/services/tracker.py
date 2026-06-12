@@ -42,17 +42,28 @@ def all_active() -> dict[int, int]:
         }
 
 
-def update_ecosystem_peak(total: int) -> None:
+def update_ecosystem_peak(total: int) -> bool:
+    """Update peak if total is higher or it's a new day. Returns True if peak changed."""
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     with _lock:
         if _ecosystem_peak["date"] != today:
             _ecosystem_peak["date"] = today
             _ecosystem_peak["peak"] = total
+            return True
         elif total > _ecosystem_peak["peak"]:
             _ecosystem_peak["peak"] = total
+            return True
+    return False
 
 
 def get_ecosystem_peak() -> int:
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     with _lock:
         return _ecosystem_peak["peak"] if _ecosystem_peak["date"] == today else 0
+
+
+def set_peak_state(date: str, peak: int) -> None:
+    """Load a persisted peak value (called at startup)."""
+    with _lock:
+        _ecosystem_peak["date"] = date
+        _ecosystem_peak["peak"] = peak

@@ -213,14 +213,6 @@ export async function sendNotificationNow(): Promise<{ sent: boolean; message: s
   return (await api.post("/notifications/send-now")).data;
 }
 
-export async function getBackendPublicUrl(): Promise<{ url: string }> {
-  return (await api.get("/notifications/backend-url")).data;
-}
-
-export async function saveBackendPublicUrl(url: string): Promise<{ url: string }> {
-  return (await api.post("/notifications/backend-url", { url })).data;
-}
-
 // ── GA4 ──────────────────────────────────────────────────────────────────────
 
 export interface GA4RealtimeData {
@@ -323,18 +315,6 @@ export async function updateTeamSlot(
 
 export async function deleteTeamSlot(teamId: number, slotId: number): Promise<Team> {
   return (await api.delete<Team>(`/teams/${teamId}/slots/${slotId}`)).data;
-}
-
-export async function uploadTeamSlotGif(teamId: number, slotId: number, file: File): Promise<Team> {
-  const form = new FormData();
-  form.append("file", file);
-  return (await api.post<Team>(`/teams/${teamId}/slots/${slotId}/gif`, form, {
-    headers: { "Content-Type": "multipart/form-data" },
-  })).data;
-}
-
-export async function deleteTeamSlotGif(teamId: number, slotId: number): Promise<Team> {
-  return (await api.delete<Team>(`/teams/${teamId}/slots/${slotId}/gif`)).data;
 }
 
 export async function testTeamNotify(teamId: number, slotId: number): Promise<{ sent: boolean; channels: number }> {

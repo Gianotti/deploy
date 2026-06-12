@@ -8,12 +8,10 @@ import {
   getClients, createClient, deleteClient, updateClientGA4, uploadClientLogo, deleteClientLogo,
   getDeployRules, createDeployRule, deleteDeployRule,
   getNotificationConfig, saveNotificationConfig, sendNotificationNow,
-  getBackendPublicUrl, saveBackendPublicUrl,
   getGA4CredentialsStatus, saveGA4Credentials, deleteGA4Credentials, getGA4Realtime,
   getRepositories, createRepository, deleteRepository, addClientToRepository, removeClientFromRepository,
   getTeams, createTeam, updateTeam, deleteTeam, addTeamChannel, removeTeamChannel,
-  addTeamSlot, updateTeamSlot, deleteTeamSlot,
-  uploadTeamSlotGif, deleteTeamSlotGif, testTeamNotify,
+  addTeamSlot, updateTeamSlot, deleteTeamSlot, testTeamNotify,
   extractError,
   type NotificationConfig, type GA4RealtimeData, type GA4CredentialsStatus,
 } from "@/lib/api";
@@ -406,24 +404,10 @@ function NotificationsTab() {
   const [sending, setSending] = useState(false);
   const [msg, setMsg] = useState("");
   const [error, setError] = useState("");
-  const [backendUrl, setBackendUrl] = useState("");
-  const [savingUrl, setSavingUrl] = useState(false);
-  const [urlMsg, setUrlMsg] = useState("");
 
   useEffect(() => {
     getNotificationConfig().then(setConfig).catch(() => setConfig({ id: 1, webhook_url: "", time_1: null, time_2: null, time_3: null, is_active: false }));
-    getBackendPublicUrl().then(r => setBackendUrl(r.url)).catch(() => {});
   }, []);
-
-  async function handleSaveUrl() {
-    setSavingUrl(true);
-    try {
-      const r = await saveBackendPublicUrl(backendUrl);
-      setBackendUrl(r.url);
-      setUrlMsg("URL guardada ✅");
-    } catch { setUrlMsg("Error al guardar"); }
-    finally { setSavingUrl(false); setTimeout(() => setUrlMsg(""), 3000); }
-  }
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
@@ -494,32 +478,6 @@ function NotificationsTab() {
         </div>
       </form>
 
-      {/* URL pública del backend — necesaria para que los GIFs aparezcan en mensajes */}
-      <div className="card p-6 space-y-4">
-        <div>
-          <h2 className="font-semibold text-gray-900 dark:text-white">URL pública del backend</h2>
-          <p className="text-xs text-gray-400 mt-1">Necesaria para que los GIFs configurados en los equipos aparezcan en los mensajes de Google Chat. Debe ser accesible desde Internet.</p>
-        </div>
-        <div className="flex gap-2 items-end">
-          <div className="flex-1">
-            <label className="field-label">URL base del backend</label>
-            <input className="field font-mono text-sm" type="url"
-              placeholder="https://tu-dominio.com o http://ip:8040"
-              value={backendUrl}
-              onChange={e => setBackendUrl(e.target.value)} />
-          </div>
-          <button onClick={handleSaveUrl} disabled={savingUrl}
-            className="btn-primary flex-shrink-0 disabled:opacity-50">
-            {savingUrl ? "..." : "Guardar"}
-          </button>
-        </div>
-        {urlMsg && <p className={`text-sm ${urlMsg.startsWith("Error") ? "text-red-500" : "text-green-500"}`}>{urlMsg}</p>}
-        {!backendUrl && (
-          <p className="text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 rounded-lg px-3 py-2">
-            ⚠ Sin URL configurada los GIFs no se enviarán en las notificaciones — solo se enviará el texto del mensaje.
-          </p>
-        )}
-      </div>
     </div>
   );
 }
@@ -969,17 +927,6 @@ function TeamsTab() {
     finally { setTestingSlot(t => ({ ...t, [slotId]: false })); }
   }
 
-  async function handleGifUpload(teamId: number, slotId: number, file: File) {
-    try { await uploadTeamSlotGif(teamId, slotId, file); load(); }
-    catch (err: any) { alert(extractError(err)); }
-  }
-
-  async function handleGifDelete(teamId: number, slotId: number) {
-    if (!confirm("¿Eliminar el GIF de este horario?")) return;
-    try { await deleteTeamSlotGif(teamId, slotId); load(); }
-    catch (err: any) { alert(extractError(err)); }
-  }
-
   function setDraft(teamId: number, slotId: number, patch: Partial<SlotDraft>) {
     setSlotDrafts(d => ({
       ...d,
@@ -990,7 +937,7 @@ function TeamsTab() {
   return (
     <div className="space-y-6">
       <div className="bg-blue-50 dark:bg-navy-700/50 border border-blue-200 dark:border-navy-700 rounded-xl px-4 py-3 text-sm text-blue-700 dark:text-gray-400">
-        Cada equipo define sus días de deploy y puede notificar a múltiples canales de Google Chat. Las notificaciones solo se envían en los días habilitados. Podés subir un GIF por horario y configurar mensajes distintos para cuando el deploy esté libre o bloqueado.
+        Cada equipo define sus días de deploy y puede notificar a múltiples canales de Google Chat. Las notificaciones solo se envían en los días habilitados. Podés configurar mensajes distintos para cuando el deploy esté libre o bloqueado.
       </div>
 
       {/* Crear equipo */}
@@ -1139,24 +1086,6 @@ function TeamsTab() {
                             value={draft.message_blocked}
                             onChange={e => setDraft(team.id, slot.id, { message_blocked: e.target.value })} />
                         </div>
-                      </div>
-
-                      {/* GIF */}
-                      <div className="flex items-center gap-3 flex-wrap">
-                        {slot.has_gif ? (
-                          <>
-                            <img src={`/api/public/team-gif/${slot.id}`} alt="GIF" className="h-14 rounded-lg object-cover border border-gray-200 dark:border-navy-700" />
-                            <span className="text-xs text-gray-500 dark:text-gray-400">{slot.gif_filename}</span>
-                            <button onClick={() => handleGifDelete(team.id, slot.id)}
-                              className="text-xs text-red-500 hover:underline">Eliminar GIF</button>
-                          </>
-                        ) : (
-                          <label className="cursor-pointer flex items-center gap-2 px-3 py-1.5 rounded-lg border border-dashed border-gray-300 dark:border-navy-600 text-xs text-gray-500 dark:text-gray-400 hover:border-accent hover:text-accent transition">
-                            🖼 Subir GIF / imagen
-                            <input type="file" className="hidden" accept="image/gif,image/png,image/jpeg,image/webp"
-                              onChange={e => { const f = e.target.files?.[0]; if (f) handleGifUpload(team.id, slot.id, f); e.target.value = ""; }} />
-                          </label>
-                        )}
                       </div>
 
                     </div>

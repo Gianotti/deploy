@@ -55,8 +55,6 @@ def _patch_missing_columns() -> None:
                 ("sort_order",      "ALTER TABLE team_notification_slots ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0"),
                 ("message_ok",      "ALTER TABLE team_notification_slots ADD COLUMN message_ok TEXT"),
                 ("message_blocked", "ALTER TABLE team_notification_slots ADD COLUMN message_blocked TEXT"),
-                ("gif_data",        "ALTER TABLE team_notification_slots ADD COLUMN gif_data BYTEA"),
-                ("gif_filename",    "ALTER TABLE team_notification_slots ADD COLUMN gif_filename VARCHAR"),
             ]:
                 if col not in slot_cols:
                     conn.execute(text(ddl))

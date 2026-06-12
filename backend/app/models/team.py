@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, ForeignKey, LargeBinary
+from sqlalchemy import Column, Integer, String, ForeignKey
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import relationship
 
@@ -42,7 +42,5 @@ class TeamNotificationSlot(Base):
     time = Column(String(5), nullable=True)           # "HH:MM" UTC
     message_ok = Column(String, nullable=True)        # mensaje cuando deploy está LIBRE
     message_blocked = Column(String, nullable=True)   # mensaje cuando hay promo activa
-    gif_data = Column(LargeBinary, nullable=True)
-    gif_filename = Column(String, nullable=True)
 
     team = relationship("Team", back_populates="slots")

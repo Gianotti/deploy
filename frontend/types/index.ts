@@ -23,8 +23,6 @@ export interface TeamNotificationSlot {
   time: string | null;
   message_ok: string | null;
   message_blocked: string | null;
-  has_gif: boolean;
-  gif_filename: string | null;
 }
 
 export interface Team {
