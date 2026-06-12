@@ -83,12 +83,43 @@ function ClientCard({ client }: { client: ClientStatus }) {
         </div>
       )}
 
-      {/* Usuarios activos */}
-      <div className="bg-white dark:bg-navy-900 rounded-xl px-4 py-3 w-full flex items-center justify-between">
-        <p className="text-xs text-gray-400">Usuarios activos ahora</p>
-        {client.ga4_active_users != null
-          ? <p className="text-blue-500 dark:text-blue-400 font-bold text-lg">👥 {client.ga4_active_users}</p>
-          : <p className="text-gray-400 font-mono text-sm">—</p>}
+      {/* Usuarios activos + fuentes */}
+      <div className="bg-white dark:bg-navy-900 rounded-xl px-4 py-3 w-full space-y-2">
+        <div className="flex items-center justify-between">
+          <p className="text-xs text-gray-400">Usuarios activos ahora</p>
+          {client.ga4_active_users != null
+            ? <p className="text-blue-500 dark:text-blue-400 font-bold text-lg">👥 {client.ga4_active_users}</p>
+            : <p className="text-gray-400 font-mono text-sm">—</p>}
+        </div>
+        {(() => {
+          const src = client.ga4_traffic_sources ?? {};
+          const hasSrc = Object.values(src).some(v => v > 0);
+          if (!hasSrc) return null;
+          return (
+            <div className="flex items-center gap-2 flex-wrap border-t border-gray-100 dark:border-navy-700 pt-2">
+              {src.paid > 0 && (
+                <span className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full bg-orange-100 dark:bg-orange-900/30 text-orange-600 dark:text-orange-400">
+                  💰 pago: {src.paid}
+                </span>
+              )}
+              {src.organic > 0 && (
+                <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400">
+                  🔍 orgánico: {src.organic}
+                </span>
+              )}
+              {src.direct > 0 && (
+                <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-gray-100 dark:bg-navy-700 text-gray-500 dark:text-gray-400">
+                  🔗 directo: {src.direct}
+                </span>
+              )}
+              {src.other > 0 && (
+                <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-gray-100 dark:bg-navy-700 text-gray-500 dark:text-gray-400">
+                  ↗ otros: {src.other}
+                </span>
+              )}
+            </div>
+          );
+        })()}
       </div>
 
       {/* Top 3 URLs */}

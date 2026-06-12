@@ -109,8 +109,7 @@ def get_active_users(credentials_json: str, property_id: str) -> dict:
         total_users = int(totals_resp.rows[0].metric_values[0].value) if totals_resp.rows else 0
         total_views = int(totals_resp.rows[0].metric_values[1].value) if totals_resp.rows else 0
 
-        # Query de páginas es opcional — properties de alto tráfico o app-properties
-        # pueden fallar aquí sin afectar el dato principal de usuarios activos.
+        # Páginas — opcional
         try:
             pages_resp = ga4.run_realtime_report(RunRealtimeReportRequest(
                 property=property_id,
@@ -125,10 +124,34 @@ def get_active_users(credentials_json: str, property_id: str) -> dict:
         except Exception:
             top_pages = []
 
+        # Fuentes de tráfico — opcional; clasifica por medium en paid/organic/direct/other
+        traffic_sources: dict[str, int] = {"paid": 0, "organic": 0, "direct": 0, "other": 0}
+        try:
+            src_resp = ga4.run_realtime_report(RunRealtimeReportRequest(
+                property=property_id,
+                dimensions=[Dimension(name="sessionMedium")],
+                metrics=[Metric(name="activeUsers")],
+            ))
+            _PAID = {"cpc", "paid", "ppc", "display", "cpm", "cpv", "paidsearch", "paidvideo"}
+            for row in src_resp.rows:
+                medium = row.dimension_values[0].value.lower()
+                users = int(row.metric_values[0].value)
+                if medium in _PAID:
+                    traffic_sources["paid"] += users
+                elif medium == "organic":
+                    traffic_sources["organic"] += users
+                elif medium in {"(none)", "direct", ""}:
+                    traffic_sources["direct"] += users
+                else:
+                    traffic_sources["other"] += users
+        except Exception:
+            pass
+
         data = {
             "active_users": total_users,
             "page_views": total_views,
             "top_pages": top_pages,
+            "traffic_sources": traffic_sources,
         }
         _result_cache[property_id] = (now, data)
         return data

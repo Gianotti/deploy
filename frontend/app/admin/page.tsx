@@ -660,9 +660,19 @@ function GA4Tab() {
                 </div>
                 {/* Resultado de GA4 */}
                 {rt && rt.active_users >= 0 && (
-                  <div className="ml-44 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-xl px-4 py-3 flex items-center gap-4 flex-wrap">
-                    <span className="text-blue-600 dark:text-blue-400 font-bold">👥 {rt.active_users} usuarios activos ahora</span>
-                    <span className="text-gray-400 text-xs">📄 {rt.page_views} page views</span>
+                  <div className="ml-44 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-xl px-4 py-3 space-y-2">
+                    <div className="flex items-center gap-4 flex-wrap">
+                      <span className="text-blue-600 dark:text-blue-400 font-bold">👥 {rt.active_users} usuarios activos ahora</span>
+                      <span className="text-gray-400 text-xs">📄 {rt.page_views} page views</span>
+                    </div>
+                    {Object.values(rt.traffic_sources ?? {}).some(v => v > 0) && (
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {rt.traffic_sources.paid > 0 && <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-orange-100 dark:bg-orange-900/30 text-orange-600 dark:text-orange-400">💰 pago: {rt.traffic_sources.paid}</span>}
+                        {rt.traffic_sources.organic > 0 && <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400">🔍 orgánico: {rt.traffic_sources.organic}</span>}
+                        {rt.traffic_sources.direct > 0 && <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 dark:bg-navy-700 text-gray-500 dark:text-gray-400">🔗 directo: {rt.traffic_sources.direct}</span>}
+                        {rt.traffic_sources.other > 0 && <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 dark:bg-navy-700 text-gray-500 dark:text-gray-400">↗ otros: {rt.traffic_sources.other}</span>}
+                      </div>
+                    )}
                   </div>
                 )}
                 {rt && rt.active_users < 0 && (

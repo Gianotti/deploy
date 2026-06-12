@@ -170,6 +170,7 @@ export interface ClientStatus {
   has_logo?: boolean;
   ga4_active_users: number | null;
   ga4_top_pages: { path: string; users: number }[];
+  ga4_traffic_sources: Record<string, number>;
 }
 
 export interface PublicStatus {
@@ -220,6 +221,7 @@ export interface GA4RealtimeData {
   property_id: string;
   active_users: number;   // -1 = error
   page_views: number;
+  traffic_sources: Record<string, number>;
   error: string | null;
 }
 

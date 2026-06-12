@@ -47,6 +47,7 @@ class ClientStatusOut(BaseModel):
     has_logo: bool = False
     ga4_active_users: int | None = None
     ga4_top_pages: list[dict] = []
+    ga4_traffic_sources: dict[str, int] = {}
 
 
 class PublicStatusOut(BaseModel):
@@ -129,6 +130,7 @@ def public_status(db: Session = Depends(get_db)):
                 has_logo=client.logo_data is not None,
                 ga4_active_users=users,
                 ga4_top_pages=ga4_data["top_pages"] if ga4_data else [],
+                ga4_traffic_sources=ga4_data.get("traffic_sources", {}) if ga4_data else {},
             )
         )
 
