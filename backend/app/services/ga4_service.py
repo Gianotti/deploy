@@ -35,7 +35,7 @@ _oauth_creds_key: str | None = None       # hash de las credenciales OAuth actua
 # Cache de resultados por property_id  →  (timestamp, data)
 # Evita quota excedida en refreshes rápidos y sirve datos previos ante errores transitorios.
 _result_cache: dict[str, tuple[float, dict]] = {}
-_CACHE_TTL = 45  # segundos
+_CACHE_TTL = 120  # segundos — properties de alto tráfico consumen más quota tokens por llamada
 
 
 def _client_from_service_account(credentials_json: str) -> BetaAnalyticsDataClient:
@@ -119,16 +119,21 @@ def get_active_users(credentials_json: str, property_id: str) -> dict:
             total_views += views
             by_country[country] = users
 
-        pages_resp = ga4.run_realtime_report(RunRealtimeReportRequest(
-            property=property_id,
-            dimensions=[Dimension(name="unifiedScreenName")],
-            metrics=[Metric(name="activeUsers")],
-            limit=3,
-        ))
-        top_pages = [
-            {"path": row.dimension_values[0].value, "users": int(row.metric_values[0].value)}
-            for row in pages_resp.rows
-        ]
+        # Query de páginas es opcional — properties de alto tráfico o app-properties
+        # pueden fallar aquí sin afectar el dato principal de usuarios activos.
+        try:
+            pages_resp = ga4.run_realtime_report(RunRealtimeReportRequest(
+                property=property_id,
+                dimensions=[Dimension(name="unifiedScreenName")],
+                metrics=[Metric(name="activeUsers")],
+                limit=3,
+            ))
+            top_pages = [
+                {"path": row.dimension_values[0].value, "users": int(row.metric_values[0].value)}
+                for row in pages_resp.rows
+            ]
+        except Exception:
+            top_pages = []
 
         data = {
             "active_users": total_users,
