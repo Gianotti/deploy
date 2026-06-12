@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import AuthGuard from "@/components/AuthGuard";
+import ClientAvatar from "@/components/ClientAvatar";
 import { useAuth } from "@/lib/auth";
 import {
   getCountries, createCountry, deleteCountry,
@@ -232,7 +233,7 @@ function ClientsTab() {
                   <img src={`/api/clients/${c.id}/logo`} alt={c.name} className="object-contain w-full h-full" />
                 </div>
               ) : (
-                <div className="w-10 h-10 rounded-lg flex items-center justify-center bg-gray-100 dark:bg-navy-700 flex-shrink-0 text-xl">🏢</div>
+                <ClientAvatar name={c.name} size="sm" />
               )}
               <div className="min-w-0">
                 <span className="font-medium text-gray-900 dark:text-white">{c.name}</span>

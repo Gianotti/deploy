@@ -4,6 +4,7 @@ import Image from "next/image";
 import { useEffect, useState, useCallback } from "react";
 import { getPublicStatus, type ClientStatus } from "@/lib/api";
 import { useTheme } from "@/lib/theme";
+import ClientAvatar from "@/components/ClientAvatar";
 
 const REFRESH_SECS = 60;
 
@@ -46,9 +47,7 @@ function ClientCard({ client }: { client: ClientStatus }) {
               <Image src={logoUrl} alt={client.client_name} width={64} height={64} className="object-contain w-full h-full" unoptimized />
             </div>
           ) : (
-            <div className="w-16 h-16 rounded-xl flex items-center justify-center bg-white dark:bg-navy-900 border border-gray-200 dark:border-navy-700 flex-shrink-0">
-              <span className="text-3xl">🏢</span>
-            </div>
+            <ClientAvatar name={client.client_name} size="lg" />
           )}
           <div className="min-w-0">
             <p className="text-gray-900 dark:text-white font-black text-xl leading-tight truncate">{client.client_name}</p>
