@@ -20,6 +20,19 @@ from app.services import tracker
 router = APIRouter(prefix="/public", tags=["public"])
 
 
+class PublicTeamOut(BaseModel):
+    id: int
+    name: str
+    deploy_days: list[int]
+
+
+@router.get("/teams", response_model=list[PublicTeamOut])
+def public_teams(db: Session = Depends(get_db)):
+    from app.models.team import Team
+    teams = db.query(Team).all()
+    return [PublicTeamOut(id=t.id, name=t.name, deploy_days=t.deploy_days or []) for t in teams]
+
+
 def _linked_client_ids(client_id: int, db) -> list[int]:
     repos = db.query(Repository).filter(
         Repository.clients.any(Client.id == client_id)

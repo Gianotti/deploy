@@ -189,6 +189,16 @@ export async function getPublicStatus(): Promise<PublicStatus> {
   return (await api.get<PublicStatus>("/public/status")).data;
 }
 
+export interface PublicTeam {
+  id: number;
+  name: string;
+  deploy_days: number[]; // 0=Mon … 6=Sun
+}
+
+export async function getPublicTeams(): Promise<PublicTeam[]> {
+  return (await api.get<PublicTeam[]>("/public/teams")).data;
+}
+
 export async function getTodayStatus(clientId: number): Promise<TodayStatusResponse> {
   return (await api.get<TodayStatusResponse>("/deploy-status/today", {
     params: { client_id: clientId },
