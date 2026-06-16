@@ -130,6 +130,7 @@ def public_calendar(
                         criticality=p.criticality,
                     )
                     for p in w.active_promotions
+                    if p.client_id == client.id
                 ],
             ))
             if _WEIGHT[w.deploy_status] > _WEIGHT[entry["merged_status"]]:

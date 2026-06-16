@@ -9,7 +9,7 @@ import type { Client, TodayStatusResponse, PromoType } from "@/types";
 
 const PROMO_LABEL: Record<PromoType, string> = {
   PROMO_ESPECIAL: "Promo Especial 🔴",
-  PROMO_NORMAL:   "Promo Normal 🟡",
+  PROMO_NORMAL:   "Comunicación 🟡",
 };
 
 export default function DashboardPage() {

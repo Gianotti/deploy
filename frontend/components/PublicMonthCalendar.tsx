@@ -246,7 +246,7 @@ function DayDetail({ day, todayStr, onClose }: { day: PublicCalDay; todayStr: st
 
 const PROMO_TYPE_CFG: Record<string, { label: string; bg: string; text: string }> = {
   PROMO_ESPECIAL: { label: "Especial", bg: "bg-red-100 dark:bg-red-900/30",    text: "text-red-600 dark:text-red-400" },
-  PROMO_NORMAL:   { label: "Normal",   bg: "bg-amber-100 dark:bg-amber-900/30", text: "text-amber-600 dark:text-amber-400" },
+  PROMO_NORMAL:   { label: "Comunicación", bg: "bg-amber-100 dark:bg-amber-900/30", text: "text-amber-600 dark:text-amber-400" },
 };
 
 function CriticalityDots({ value }: { value: number }) {

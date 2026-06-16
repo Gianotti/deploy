@@ -12,7 +12,7 @@ import type { Client, DeployWindowDay, DeployStatus, PromoType } from "@/types";
 
 const PROMO_LABEL: Record<PromoType, string> = {
   PROMO_ESPECIAL: "Promo Especial 🔴",
-  PROMO_NORMAL:   "Promo Normal 🟡",
+  PROMO_NORMAL:   "Comunicación 🟡",
 };
 
 const STATUS_WEIGHT: Record<DeployStatus, number> = {

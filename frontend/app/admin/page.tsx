@@ -25,7 +25,7 @@ const DEPLOY_STATUSES: DeployStatus[] = ["LIBRE", "RESTRINGIDO", "BLOQUEADO"];
 
 const PROMO_LABEL: Record<PromoType, string> = {
   PROMO_ESPECIAL: "Promo Especial 🔴 (bloquea el día)",
-  PROMO_NORMAL:   "Promo Normal 🟡 (deploy con aviso)",
+  PROMO_NORMAL:   "Comunicación 🟡 (deploy con aviso)",
 };
 
 const STATUS_STYLE: Record<DeployStatus, string> = {
@@ -304,7 +304,7 @@ function RulesTab() {
     <div className="space-y-6">
       <div className="bg-blue-50 dark:bg-navy-700/50 border border-blue-200 dark:border-navy-700 rounded-xl px-4 py-3 text-sm text-blue-700 dark:text-gray-400">
         Defaults sin regla: <span className="text-red-500 font-semibold">PROMO_ESPECIAL → BLOQUEADO</span> ·
-        <span className="text-yellow-500 font-semibold"> PROMO_NORMAL → RESTRINGIDO</span>
+        <span className="text-yellow-500 font-semibold"> Comunicación → RESTRINGIDO</span>
       </div>
 
       <form onSubmit={handleCreate} className="card p-6 space-y-5">
@@ -365,7 +365,7 @@ function RulesTab() {
           <label className="field-label">Descripción (opcional)</label>
           <input className="field" value={form.description}
             onChange={e => setForm({ ...form, description: e.target.value })}
-            placeholder="Ej: Promo normal alta criticidad → ventana nocturna" />
+            placeholder="Ej: Comunicación alta criticidad → ventana nocturna" />
         </div>
 
         {error && <p className="text-red-500 text-sm">{error}</p>}

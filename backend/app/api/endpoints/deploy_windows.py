@@ -18,7 +18,7 @@ router = APIRouter(tags=["deploy-windows"])
 
 STATUS_MESSAGES = {
     "LIBRE": "✅ Deploy libre — podés deployar sin restricciones.",
-    "RESTRINGIDO": "🟡 Promo Normal activa — podés deployar avisando al equipo, respetando la ventana horaria si está configurada.",
+    "RESTRINGIDO": "🟡 Comunicación activa — podés deployar avisando al equipo, respetando la ventana horaria si está configurada.",
     "BLOQUEADO": "🔴 Promo Especial activa — deploy bloqueado por todo el día.",
 }
 

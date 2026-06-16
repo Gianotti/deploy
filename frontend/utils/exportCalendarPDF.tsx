@@ -16,7 +16,7 @@ const BG    = { LIBRE: "#f0fdf4", RESTRINGIDO: "#fffbeb", BLOQUEADO: "#fef2f2" }
 const LABEL = { LIBRE: "Libre",   RESTRINGIDO: "Restringido", BLOQUEADO: "Bloqueado" } as const;
 const PROMO_TYPE_LABEL: Record<string, string> = {
   PROMO_ESPECIAL: "Especial",
-  PROMO_NORMAL:   "Normal",
+  PROMO_NORMAL:   "Comunicación",
 };
 
 type Status = keyof typeof DOT;

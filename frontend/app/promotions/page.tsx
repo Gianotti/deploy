@@ -16,7 +16,7 @@ const TYPE_STYLE: Record<PromoType, string> = {
 
 const TYPE_LABEL: Record<PromoType, string> = {
   PROMO_ESPECIAL: "Promo Especial 🔴",
-  PROMO_NORMAL:   "Promo Normal 🟡",
+  PROMO_NORMAL:   "Comunicación 🟡",
 };
 
 const EMPTY_FORM = { start_date: "", end_date: "", promo_type: "PROMO_NORMAL" as PromoType, criticality: 1, description: "" };
