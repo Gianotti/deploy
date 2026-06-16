@@ -20,6 +20,7 @@ STATUS_MESSAGES = {
     "LIBRE": "✅ Deploy libre — podés deployar sin restricciones.",
     "RESTRINGIDO": "🟡 Comunicación activa — podés deployar avisando al equipo, respetando la ventana horaria si está configurada.",
     "BLOQUEADO": "🔴 Promo Especial activa — deploy bloqueado por todo el día.",
+    "BLOQUEADO_TRAFICO": "🔴 Alto tráfico activo — deploy bloqueado por superar el umbral de usuarios configurado.",
 }
 
 
@@ -107,6 +108,29 @@ def get_today_status(
     status, ws, we = compute_day_status(today, active, rules)
     can_now = can_deploy_now(status, ws, we, country.timezone)
 
+    # Traffic threshold check
+    traffic_blocked = False
+    if client.user_threshold is not None:
+        from app.models.integration_config import IntegrationConfig
+        from app.services import tracker as _tracker
+        users: int | None = None
+        creds_row = db.query(IntegrationConfig).filter(IntegrationConfig.key == "ga4_service_account").first()
+        if creds_row and client.ga4_property_id:
+            try:
+                from app.services.ga4_service import get_active_users
+                data = get_active_users(creds_row.value, client.ga4_property_id)
+                users = data.get("active_users")
+            except Exception:
+                pass
+        if users is None:
+            users = _tracker.all_active().get(client.id)
+        if users is not None and users >= client.user_threshold:
+            traffic_blocked = True
+            status = status.__class__.BLOQUEADO
+            can_now = False
+
+    message = STATUS_MESSAGES["BLOQUEADO_TRAFICO"] if traffic_blocked else STATUS_MESSAGES[status.value]
+
     return TodayStatusResponse(
         client_id=client_id,
         date=today,
@@ -115,5 +139,7 @@ def get_today_status(
         window_end=we,
         can_deploy_now=can_now,
         active_promotions=active,
-        message=STATUS_MESSAGES[status.value],
+        message=message,
+        traffic_blocked=traffic_blocked,
+        user_threshold=client.user_threshold,
     )

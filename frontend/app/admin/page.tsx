@@ -6,7 +6,7 @@ import ClientAvatar from "@/components/ClientAvatar";
 import { useAuth } from "@/lib/auth";
 import {
   getCountries, createCountry, deleteCountry,
-  getClients, createClient, deleteClient, updateClientGA4, uploadClientLogo, deleteClientLogo,
+  getClients, createClient, deleteClient, updateClient, updateClientGA4, uploadClientLogo, deleteClientLogo,
   getDeployRules, createDeployRule, deleteDeployRule,
   getNotificationConfig, saveNotificationConfig, sendNotificationNow,
   getGA4CredentialsStatus, saveGA4Credentials, deleteGA4Credentials, getGA4Realtime,
@@ -174,12 +174,18 @@ function ClientsTab() {
   const [form, setForm] = useState({ name: "", country_id: "" });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [editingThreshold, setEditingThreshold] = useState<Record<number, string>>({});
+  const [savingThreshold, setSavingThreshold] = useState<number | null>(null);
+  const [msg, setMsg] = useState("");
 
   async function load() {
     setLoading(true);
     try {
       const [cls, cts] = await Promise.all([getClients(), getCountries()]);
       setClients(cls); setCountries(cts);
+      const map: Record<number, string> = {};
+      cls.forEach(c => { map[c.id] = c.user_threshold != null ? String(c.user_threshold) : ""; });
+      setEditingThreshold(map);
       if (cts.length && !form.country_id) setForm(f => ({ ...f, country_id: String(cts[0].id) }));
     } finally { setLoading(false); }
   }
@@ -196,6 +202,17 @@ function ClientsTab() {
     if (!confirm(`¿Eliminar "${name}"?`)) return;
     try { await deleteClient(id); load(); }
     catch (err: any) { alert(extractError(err)); }
+  }
+
+  async function handleSaveThreshold(id: number) {
+    setSavingThreshold(id);
+    try {
+      const raw = editingThreshold[id]?.trim();
+      const value = raw === "" ? null : Number(raw);
+      await updateClient(id, { user_threshold: value });
+      setMsg("Umbral guardado ✅");
+    } catch (err: any) { setError(extractError(err)); }
+    finally { setSavingThreshold(null); setTimeout(() => setMsg(""), 3000); }
   }
 
   return (
@@ -222,7 +239,60 @@ function ClientsTab() {
         </button>
       </form>
 
+      {/* Umbrales de tráfico */}
+      <div className="card p-6 space-y-4">
+        <div>
+          <h2 className="font-semibold text-gray-900 dark:text-white">Umbral de usuarios activos</h2>
+          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+            Si los usuarios activos superan el umbral configurado, el deploy se bloquea automáticamente. Dejá vacío para desactivar.
+          </p>
+        </div>
+        {msg && <p className="text-green-500 text-sm">{msg}</p>}
+        {error && <p className="text-red-500 text-sm">{error}</p>}
+        <div className="space-y-2">
+          {clients.map(c => (
+            <div key={c.id} className="flex items-center gap-3 flex-wrap">
+              <div className="flex items-center gap-2 w-48 flex-shrink-0">
+                {c.has_logo ? (
+                  <div className="w-7 h-7 rounded-md overflow-hidden flex-shrink-0 bg-gray-50 dark:bg-navy-900 border border-gray-200 dark:border-navy-700">
+                    <img src={`/api/clients/${c.id}/logo`} alt={c.name} className="object-contain w-full h-full" />
+                  </div>
+                ) : (
+                  <ClientAvatar name={c.name} size="sm" />
+                )}
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-gray-900 dark:text-white truncate">{c.name}</p>
+                  <p className="text-xs text-gray-400">{c.country.iso_code}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 flex-1 min-w-0">
+                <div className="relative flex-1 max-w-xs">
+                  <input
+                    type="number" min="1" step="1"
+                    className="field pr-16"
+                    placeholder="Sin umbral"
+                    value={editingThreshold[c.id] ?? ""}
+                    onChange={e => setEditingThreshold({ ...editingThreshold, [c.id]: e.target.value })}
+                  />
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-400 pointer-events-none">usuarios</span>
+                </div>
+                <button onClick={() => handleSaveThreshold(c.id)} disabled={savingThreshold === c.id}
+                  className="btn-primary text-xs py-2 px-3 flex-shrink-0">
+                  {savingThreshold === c.id ? "..." : "Guardar"}
+                </button>
+                {c.user_threshold != null && (
+                  <span className="text-xs font-semibold px-2 py-1 rounded-full bg-orange-100 dark:bg-orange-900/30 text-orange-600 dark:text-orange-400 border border-orange-200 dark:border-orange-800/40 flex-shrink-0">
+                    bloquea en ≥ {c.user_threshold}
+                  </span>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
       <div className="space-y-2">
+        <h2 className="font-semibold text-gray-900 dark:text-white text-sm uppercase tracking-wide px-1">Clientes</h2>
         {loading && <p className="text-gray-400 text-sm">Cargando...</p>}
         {clients.map(c => (
           <div key={c.id} className="card px-5 py-3 flex items-center justify-between gap-4">
@@ -239,6 +309,11 @@ function ClientsTab() {
                 <span className="font-medium text-gray-900 dark:text-white">{c.name}</span>
                 <span className="ml-3 text-gray-400 text-sm">{c.country.name}</span>
                 <span className="ml-2 text-xs bg-gray-100 dark:bg-navy-700 text-gray-500 dark:text-gray-400 px-2 py-0.5 rounded-full">{c.country.iso_code}</span>
+                {c.user_threshold != null && (
+                  <span className="ml-2 text-xs bg-orange-50 dark:bg-orange-900/20 text-orange-500 px-2 py-0.5 rounded-full border border-orange-200 dark:border-orange-800/40">
+                    umbral: {c.user_threshold}
+                  </span>
+                )}
               </div>
             </div>
             <div className="flex items-center gap-2 flex-shrink-0">

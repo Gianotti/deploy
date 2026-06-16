@@ -6,6 +6,7 @@ class ClientBase(BaseModel):
     name: str
     country_id: int
     ga4_property_id: str | None = None
+    user_threshold: int | None = None
 
 
 class ClientCreate(ClientBase):
@@ -16,6 +17,7 @@ class ClientUpdate(BaseModel):
     name: str | None = None
     country_id: int | None = None
     ga4_property_id: str | None = None
+    user_threshold: int | None = None
 
 
 class ClientOut(ClientBase):
@@ -33,6 +35,7 @@ class ClientOut(ClientBase):
             name=c.name,
             country_id=c.country_id,
             ga4_property_id=c.ga4_property_id,
+            user_threshold=c.user_threshold,
             country=c.country,
             has_logo=c.logo_data is not None,
             logo_filename=c.logo_filename,

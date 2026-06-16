@@ -175,6 +175,8 @@ class ClientStatusOut(BaseModel):
     window_end: str | None
     active_promo_count: int
     has_logo: bool = False
+    user_threshold: int | None = None
+    traffic_blocked: bool = False
     ga4_active_users: int | None = None
     ga4_top_pages: list[dict] = []
     ga4_traffic_sources: dict[str, int] = {}
@@ -250,6 +252,16 @@ def public_status(db: Session = Depends(get_db)):
         # GA4 preferred; fallback to in-memory GTM tracker
         users = ga4_data["active_users"] if ga4_data else active_by_client.get(client.id)
 
+        # Traffic spike threshold: block deploy if active users >= configured limit
+        traffic_blocked = bool(
+            client.user_threshold is not None
+            and users is not None
+            and users >= client.user_threshold
+        )
+        if traffic_blocked:
+            status = DeployStatus.BLOQUEADO
+            can_now = False
+
         results.append(
             ClientStatusOut(
                 client_id=client.id,
@@ -263,6 +275,8 @@ def public_status(db: Session = Depends(get_db)):
                 window_end=we,
                 active_promo_count=len(active),
                 has_logo=client.logo_data is not None,
+                user_threshold=client.user_threshold,
+                traffic_blocked=traffic_blocked,
                 ga4_active_users=users,
                 ga4_top_pages=ga4_data["top_pages"] if ga4_data else [],
                 ga4_traffic_sources=ga4_data.get("traffic_sources", {}) if ga4_data else {},

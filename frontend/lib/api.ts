@@ -83,7 +83,7 @@ export async function createClient(data: { name: string; country_id: number }): 
   return (await api.post<Client>("/clients/", data)).data;
 }
 
-export async function updateClient(id: number, data: Partial<{ name: string; country_id: number }>): Promise<Client> {
+export async function updateClient(id: number, data: Partial<{ name: string; country_id: number; user_threshold: number | null }>): Promise<Client> {
   return (await api.patch<Client>(`/clients/${id}`, data)).data;
 }
 
@@ -168,6 +168,8 @@ export interface ClientStatus {
   window_end: string | null;
   active_promo_count: number;
   has_logo?: boolean;
+  user_threshold: number | null;
+  traffic_blocked: boolean;
   ga4_active_users: number | null;
   ga4_top_pages: { path: string; users: number }[];
   ga4_traffic_sources: Record<string, number>;

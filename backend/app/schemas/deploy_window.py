@@ -28,3 +28,5 @@ class TodayStatusResponse(BaseModel):
     can_deploy_now: bool
     active_promotions: List[PromotionOut]
     message: str
+    traffic_blocked: bool = False
+    user_threshold: int | None = None
