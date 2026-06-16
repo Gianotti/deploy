@@ -147,6 +147,45 @@ function ClientCard({ client }: { client: ClientStatus }) {
         })()}
       </div>
 
+      {/* Dispositivos + conversion rate */}
+      {(() => {
+        const dev = client.ga4_device_breakdown ?? {};
+        const devTotal = (dev.mobile ?? 0) + (dev.tablet ?? 0) + (dev.desktop ?? 0);
+        const mobilePct = devTotal > 0 ? Math.round(((dev.mobile ?? 0) + (dev.tablet ?? 0)) / devTotal * 100) : null;
+        const desktopPct = devTotal > 0 ? Math.round((dev.desktop ?? 0) / devTotal * 100) : null;
+        const cr = client.ga4_active_users
+          ? Math.round((client.ga4_conversions / client.ga4_active_users) * 1000) / 10
+          : null;
+
+        if (mobilePct === null && cr === null) return null;
+
+        return (
+          <div className="bg-gray-50 dark:bg-navy-900 rounded-xl px-4 py-3 w-full border border-gray-100 dark:border-navy-700">
+            <p className="text-xs text-gray-500 mb-2">Dispositivos y conversión</p>
+            <div className="flex items-center gap-2 flex-wrap">
+              {mobilePct !== null && (
+                <>
+                  <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2 py-1 rounded-full bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-400 border border-violet-200 dark:border-violet-800/40">
+                    <svg className="w-3 h-3" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><rect x="4" y="1.5" width="8" height="13" rx="1.5"/><line x1="6.5" y1="12" x2="9.5" y2="12" strokeLinecap="round"/></svg>
+                    {mobilePct}% mobile
+                  </span>
+                  <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2 py-1 rounded-full bg-sky-100 dark:bg-sky-900/30 text-sky-700 dark:text-sky-400 border border-sky-200 dark:border-sky-800/40">
+                    <svg className="w-3 h-3" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><rect x="1.5" y="2.5" width="13" height="8.5" rx="1.2"/><line x1="5.5" y1="14" x2="10.5" y2="14" strokeLinecap="round"/><line x1="8" y1="11" x2="8" y2="14" strokeLinecap="round"/></svg>
+                    {desktopPct}% desktop
+                  </span>
+                </>
+              )}
+              {cr !== null && (
+                <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2 py-1 rounded-full bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 border border-green-200 dark:border-green-800/40">
+                  <svg className="w-3 h-3" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"><polyline points="1.5 11 6 6.5 9 9.5 14.5 4"/><polyline points="10.5 4 14.5 4 14.5 8"/></svg>
+                  CR {cr}%
+                </span>
+              )}
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Top 3 URLs */}
       {(client.ga4_top_pages ?? []).length > 0 && (
         <div className="bg-gray-50 dark:bg-navy-900 rounded-xl px-4 py-3 w-full border border-gray-100 dark:border-navy-700">
