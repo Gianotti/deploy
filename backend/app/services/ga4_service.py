@@ -168,6 +168,40 @@ def get_active_users(credentials_json: str, property_id: str) -> dict:
         except Exception:
             pass
 
+        # Top eventos activos — opcional
+        top_events: list[dict] = []
+        try:
+            ev_resp = ga4.run_realtime_report(RunRealtimeReportRequest(
+                property=property_id,
+                dimensions=[Dimension(name="eventName")],
+                metrics=[Metric(name="eventCount")],
+                limit=10,
+            ))
+            top_events = [
+                {"event": row.dimension_values[0].value, "count": int(row.metric_values[0].value)}
+                for row in ev_resp.rows
+            ]
+        except Exception:
+            pass
+
+        # Usuarios nuevos vs recurrentes — opcional
+        new_vs_returning: dict[str, int] = {"new": 0, "returning": 0}
+        try:
+            nvr_resp = ga4.run_realtime_report(RunRealtimeReportRequest(
+                property=property_id,
+                dimensions=[Dimension(name="newVsReturning")],
+                metrics=[Metric(name="activeUsers")],
+            ))
+            for row in nvr_resp.rows:
+                label = row.dimension_values[0].value.lower()
+                users = int(row.metric_values[0].value)
+                if label == "new":
+                    new_vs_returning["new"] = users
+                elif label == "returning":
+                    new_vs_returning["returning"] = users
+        except Exception:
+            pass
+
         data = {
             "active_users": total_users,
             "page_views": total_views,
@@ -175,6 +209,8 @@ def get_active_users(credentials_json: str, property_id: str) -> dict:
             "top_pages": top_pages,
             "traffic_sources": traffic_sources,
             "device_breakdown": device_breakdown,
+            "top_events": top_events,
+            "new_vs_returning": new_vs_returning,
         }
         _result_cache[property_id] = (now, data)
         return data

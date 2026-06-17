@@ -29,7 +29,9 @@ class GA4RealtimeOut(BaseModel):
     top_pages: list[dict] = []
     traffic_sources: dict[str, int] = {}
     device_breakdown: dict[str, int] = {}
-    error: str | None = None  # mensaje de error legible si falló
+    top_events: list[dict] = []
+    new_vs_returning: dict[str, int] = {}
+    error: str | None = None
 
 
 def _get_creds(db: Session) -> str | None:

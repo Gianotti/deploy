@@ -182,6 +182,8 @@ class ClientStatusOut(BaseModel):
     ga4_traffic_sources: dict[str, int] = {}
     ga4_device_breakdown: dict[str, int] = {}
     ga4_conversions: int = 0
+    ga4_top_events: list[dict] = []
+    ga4_new_vs_returning: dict[str, int] = {}
 
 
 class PublicStatusOut(BaseModel):
@@ -282,6 +284,8 @@ def public_status(db: Session = Depends(get_db)):
                 ga4_traffic_sources=ga4_data.get("traffic_sources", {}) if ga4_data else {},
                 ga4_device_breakdown=ga4_data.get("device_breakdown", {}) if ga4_data else {},
                 ga4_conversions=ga4_data.get("conversions", 0) if ga4_data else 0,
+                ga4_top_events=ga4_data.get("top_events", []) if ga4_data else [],
+                ga4_new_vs_returning=ga4_data.get("new_vs_returning", {}) if ga4_data else {},
             )
         )
 

@@ -164,7 +164,10 @@ function ClientCard({ client }: { client: ClientStatus }) {
         })()}
       </div>
 
-      {/* Dispositivos + conversion rate */}
+      {/* Top eventos activos */}
+      <EventsPanel events={client.ga4_top_events ?? []} />
+
+      {/* Dispositivos + conversion rate + nuevos vs recurrentes */}
       {(() => {
         const dev = client.ga4_device_breakdown ?? {};
         const devTotal = (dev.mobile ?? 0) + (dev.tablet ?? 0) + (dev.desktop ?? 0);
@@ -173,12 +176,15 @@ function ClientCard({ client }: { client: ClientStatus }) {
         const cr = client.ga4_active_users
           ? Math.round((client.ga4_conversions / client.ga4_active_users) * 1000) / 10
           : null;
+        const nvr = client.ga4_new_vs_returning ?? {};
+        const nvrTotal = (nvr.new ?? 0) + (nvr.returning ?? 0);
+        const hasNvr = nvrTotal > 0;
 
-        if (mobilePct === null && cr === null) return null;
+        if (mobilePct === null && cr === null && !hasNvr) return null;
 
         return (
           <div className="bg-gray-50 dark:bg-navy-900 rounded-xl px-4 py-3 w-full border border-gray-100 dark:border-navy-700">
-            <p className="text-xs text-gray-500 mb-2">Dispositivos y conversión</p>
+            <p className="text-xs text-gray-500 mb-2">Dispositivos, conversión y audiencia</p>
             <div className="flex items-center gap-2 flex-wrap">
               {mobilePct !== null && (
                 <>
@@ -197,6 +203,18 @@ function ClientCard({ client }: { client: ClientStatus }) {
                   <svg className="w-3 h-3" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"><polyline points="1.5 11 6 6.5 9 9.5 14.5 4"/><polyline points="10.5 4 14.5 4 14.5 8"/></svg>
                   CR {cr}%
                 </span>
+              )}
+              {hasNvr && (
+                <>
+                  <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2 py-1 rounded-full bg-cyan-100 dark:bg-cyan-900/30 text-cyan-700 dark:text-cyan-400 border border-cyan-200 dark:border-cyan-800/40">
+                    <svg className="w-3 h-3" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><circle cx="8" cy="5" r="2.5"/><path d="M3 14c0-2.8 2.2-5 5-5s5 2.2 5 5" strokeLinecap="round"/></svg>
+                    {nvr.new ?? 0} nuevos
+                  </span>
+                  <span className="inline-flex items-center gap-1.5 text-xs font-medium px-2 py-1 rounded-full bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800/40">
+                    <svg className="w-3 h-3" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><circle cx="5.5" cy="5" r="2"/><circle cx="10.5" cy="5" r="2"/><path d="M1.5 14c0-2.2 1.8-4 4-4s4 1.8 4 4" strokeLinecap="round"/><path d="M10.5 10c1.7.3 3 1.8 3 3.8" strokeLinecap="round"/></svg>
+                    {nvr.returning ?? 0} recurrentes
+                  </span>
+                </>
               )}
             </div>
           </div>
@@ -235,6 +253,44 @@ function ClientCard({ client }: { client: ClientStatus }) {
           </p>
         </div>
       )}
+    </div>
+  );
+}
+
+// ── Events Panel ─────────────────────────────────────────────────────────────
+
+const NOISE_EVENTS = new Set(["page_view","session_start","scroll","user_engagement","first_visit","first_open","click","gtm.dom","gtm.load","gtm.historyChange"]);
+
+const EVENT_CFG: Record<string, { label: string; cls: string }> = {
+  purchase:          { label: "compra",          cls: "bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 border-green-200 dark:border-green-800/40" },
+  add_to_cart:       { label: "add al carrito",  cls: "bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-800/40" },
+  begin_checkout:    { label: "inicio checkout",  cls: "bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-800/40" },
+  checkout_start:    { label: "inicio checkout",  cls: "bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-800/40" },
+  add_payment_info:  { label: "pago",             cls: "bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-800/40" },
+  add_shipping_info: { label: "envío",            cls: "bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-800/40" },
+  login:             { label: "login",            cls: "bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 border-blue-200 dark:border-blue-800/40" },
+  sign_up:           { label: "registro",         cls: "bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 border-blue-200 dark:border-blue-800/40" },
+};
+
+const DEFAULT_EVENT_CLS = "bg-gray-100 dark:bg-navy-700 text-gray-600 dark:text-gray-400 border-gray-200 dark:border-navy-600";
+
+function EventsPanel({ events }: { events: { event: string; count: number }[] }) {
+  const visible = events.filter(e => !NOISE_EVENTS.has(e.event));
+  if (visible.length === 0) return null;
+  return (
+    <div className="bg-gray-50 dark:bg-navy-900 rounded-xl px-4 py-3 w-full border border-gray-100 dark:border-navy-700">
+      <p className="text-xs text-gray-500 mb-2">Actividad en vivo</p>
+      <div className="flex items-center gap-1.5 flex-wrap">
+        {visible.map((e, i) => {
+          const cfg = EVENT_CFG[e.event];
+          return (
+            <span key={i} className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full border ${cfg ? cfg.cls : DEFAULT_EVENT_CLS}`}>
+              {cfg?.label ?? e.event.replace(/_/g, " ")}
+              <span className="font-bold">{e.count}</span>
+            </span>
+          );
+        })}
+      </div>
     </div>
   );
 }
