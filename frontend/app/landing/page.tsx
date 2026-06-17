@@ -109,15 +109,7 @@ function ClientCard({ client }: { client: ClientStatus }) {
           : "bg-gray-50 dark:bg-navy-900 border-gray-100 dark:border-navy-700"
       }`}>
         <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2 min-w-0">
-            <p className="text-xs text-gray-500">Usuarios activos ahora</p>
-            {client.traffic_blocked && (
-              <span className="inline-flex items-center gap-1 text-xs font-bold px-2 py-0.5 rounded-full bg-red-500 text-white shrink-0">
-                <svg className="w-2.5 h-2.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M8 2v6M8 11v1"/><circle cx="8" cy="8" r="6.5"/></svg>
-                umbral superado
-              </span>
-            )}
-          </div>
+          <p className="text-xs text-gray-500">Usuarios activos ahora</p>
           {client.ga4_active_users != null
             ? <p className={`font-bold text-lg tabular-nums ${client.traffic_blocked ? "text-red-600 dark:text-red-400" : "text-blue-600 dark:text-blue-400"}`}>
                 <svg className="inline w-4 h-4 mr-1 mb-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
@@ -126,9 +118,15 @@ function ClientCard({ client }: { client: ClientStatus }) {
             : <p className="text-gray-400 font-mono text-sm">—</p>}
         </div>
         {client.traffic_blocked && client.user_threshold != null && (
-          <p className="text-xs text-red-500 dark:text-red-400">
-            Deploy bloqueado — {client.ga4_active_users?.toLocaleString("es-AR")} usuarios activos superan el umbral de {client.user_threshold.toLocaleString("es-AR")}
-          </p>
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="inline-flex items-center gap-1 text-xs font-bold px-2 py-0.5 rounded-full bg-red-500 text-white shrink-0">
+              <svg className="w-2.5 h-2.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M8 2v6M8 11v1"/><circle cx="8" cy="8" r="6.5"/></svg>
+              umbral superado
+            </span>
+            <p className="text-xs text-red-500 dark:text-red-400">
+              Deploy bloqueado — {client.ga4_active_users?.toLocaleString("es-AR")} usuarios superan el umbral de {client.user_threshold.toLocaleString("es-AR")}
+            </p>
+          </div>
         )}
         {(() => {
           const src = client.ga4_traffic_sources ?? {};
