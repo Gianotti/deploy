@@ -63,6 +63,8 @@ docker-compose up --build
 docker-compose down -v
 ```
 
+Production uses `docker-compose.prod.yml` (env-var-driven secrets/ports, no host Postgres port, `restart: unless-stopped`). `redeploy-prod.sh [--no-cache]` pulls latest git, rebuilds backend+frontend images, and force-recreates them — needed because the prod host (Portainer) only re-applies `command:` on redeploy, not image rebuilds.
+
 ## Architecture
 
 ### API routing (frontend → backend)

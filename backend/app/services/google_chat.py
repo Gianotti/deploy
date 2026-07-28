@@ -25,11 +25,17 @@ STATUS_LABEL = {
     DeployStatus.BLOQUEADO:   "BLOQUEADO",
 }
 
+PROMO_TYPE_LABEL = {
+    "PROMO_ESPECIAL": "Promo Especial 🔴",
+    "PROMO_NORMAL":   "Comunicación 🟡",
+}
+
 
 def build_status_message(client_statuses: list) -> str:
     """
     client_statuses: list of dicts con keys:
-      client_name, country_name, deploy_status, window_start, window_end, active_promo_count
+      client_name, country_name, deploy_status, window_start, window_end,
+      active_promo_count, active_promotions (list[Promotion])
     """
     now_utc = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
     lines = [f"🚀 *Deploy Status* — {now_utc}", ""]
@@ -45,6 +51,15 @@ def build_status_message(client_statuses: list) -> str:
             count = cs["active_promo_count"]
             line += f"  ·  {count} promo{'s' if count > 1 else ''} activa{'s' if count > 1 else ''}"
         lines.append(line)
+
+        for promo in cs.get("active_promotions", []):
+            promo_type = getattr(promo.promo_type, "value", promo.promo_type)
+            type_label = PROMO_TYPE_LABEL.get(promo_type, promo_type)
+            name = promo.description or "Sin descripción"
+            detail = f"      • {name} — {type_label}, criticidad {promo.criticality}"
+            if promo.end_date:
+                detail += f", hasta {promo.end_date.strftime('%d/%m')}"
+            lines.append(detail)
 
     return "\n".join(lines)
 
@@ -110,6 +125,7 @@ def collect_client_statuses(db) -> list:
             "window_start": ws,
             "window_end": we,
             "active_promo_count": len(active),
+            "active_promotions": active,
         })
 
     # orden: bloqueado primero
