@@ -3,41 +3,65 @@
 import { createContext, useContext, useEffect, useState } from "react";
 
 type Theme = "dark" | "light";
+export type ThemeMode = "system" | Theme;
 
-const ThemeContext = createContext<{ theme: Theme; toggle: () => void }>({
+const ThemeContext = createContext<{
+  theme: Theme;
+  mode: ThemeMode;
+  setMode: (m: ThemeMode) => void;
+  toggle: () => void;
+}>({
   theme: "dark",
+  mode: "system",
+  setMode: () => {},
   toggle: () => {},
 });
 
+function readMode(): ThemeMode {
+  try {
+    const v = localStorage.getItem("theme");
+    return v === "light" || v === "dark" ? v : "system";
+  } catch {
+    return "system";
+  }
+}
+
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
+  const [mode, setModeState] = useState<ThemeMode>("system");
   const [theme, setTheme] = useState<Theme>("dark");
 
   useEffect(() => {
-    // An explicit choice (from the navbar toggle) wins; otherwise follow the OS appearance.
+    setModeState(readMode());
+  }, []);
+
+  // "system" follows the OS appearance live; an explicit choice wins until reset to "system".
+  useEffect(() => {
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
-    const apply = (t: Theme) => {
+    const apply = () => {
+      const t: Theme = mode === "system" ? (mq.matches ? "dark" : "light") : mode;
       setTheme(t);
       document.documentElement.classList.toggle("dark", t === "dark");
     };
-    const stored = localStorage.getItem("theme") as Theme | null;
-    apply(stored ?? (mq.matches ? "dark" : "light"));
-    if (stored) return;
-    const onChange = (e: MediaQueryListEvent) => {
-      if (!localStorage.getItem("theme")) apply(e.matches ? "dark" : "light");
-    };
-    mq.addEventListener("change", onChange);
-    return () => mq.removeEventListener("change", onChange);
-  }, []);
+    apply();
+    if (mode !== "system") return;
+    mq.addEventListener("change", apply);
+    return () => mq.removeEventListener("change", apply);
+  }, [mode]);
+
+  function setMode(m: ThemeMode) {
+    try {
+      if (m === "system") localStorage.removeItem("theme");
+      else localStorage.setItem("theme", m);
+    } catch {}
+    setModeState(m);
+  }
 
   function toggle() {
-    const next: Theme = theme === "dark" ? "light" : "dark";
-    setTheme(next);
-    localStorage.setItem("theme", next);
-    document.documentElement.classList.toggle("dark", next === "dark");
+    setMode(theme === "dark" ? "light" : "dark");
   }
 
   return (
-    <ThemeContext.Provider value={{ theme, toggle }}>
+    <ThemeContext.Provider value={{ theme, mode, setMode, toggle }}>
       {children}
     </ThemeContext.Provider>
   );
@@ -46,3 +70,4 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
 export function useTheme() {
   return useContext(ThemeContext);
 }
+

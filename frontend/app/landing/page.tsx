@@ -6,6 +6,7 @@ import { useEffect, useState, useCallback } from "react";
 import { getPublicStatus, getPublicTeams, type ClientStatus, type PublicTeam } from "@/lib/api";
 import PublicMonthCalendar from "@/components/PublicMonthCalendar";
 import ClientAvatar from "@/components/ClientAvatar";
+import AppearanceControl from "@/components/AppearanceControl";
 
 const REFRESH_SECS = 60;
 const DAY_MIN = 24 * 60;
@@ -613,18 +614,19 @@ export default function LandingPage() {
             </svg>
             <h1 className="text-[17px] font-semibold text-ink">Deploy Status</h1>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3">
             {updatedAt && (
               <p className="hidden sm:block text-[13px] text-ink-3 tabular-nums">
                 Actualizado {updatedAt}<span aria-hidden> · próxima en {countdown} s</span>
               </p>
             )}
+            <AppearanceControl />
             <button
               onClick={fetchStatus}
               className={`inline-flex h-8 items-center gap-1.5 rounded-lg border border-line px-3 text-[13px] font-medium text-ink-2 hover:bg-canvas hover:text-ink ${FOCUS}`}
             >
               <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden><polyline points="23 4 23 10 17 10" /><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10" /></svg>
-              Actualizar
+              <span className="sr-only sm:not-sr-only">Actualizar</span>
             </button>
           </div>
         </div>
