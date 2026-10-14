@@ -30,7 +30,7 @@ pytest
 pytest tests/test_engine.py -v
 
 # Run a specific test
-pytest tests/test_engine.py::test_full_promo_no_rule_returns_bloqueado -v
+pytest tests/test_engine.py::test_promo_especial_no_rule_returns_bloqueado -v
 
 # Seed the database
 python -m app.db.seed
@@ -49,9 +49,11 @@ cd frontend
 
 npm install
 npm run dev      # http://localhost:3000
-npm run build
+npm run build    # also the only type check — there is no lint/tsc script
 npm run start
 ```
+
+There is no linter or formatter configured for either backend or frontend. Backend tests cover only the rules engine (`tests/test_engine.py`), which needs no database.
 
 ### Docker (full stack)
 
@@ -88,7 +90,10 @@ Key invariants:
 GET /deploy-windows        → loads Promotions + DeployRules from DB → engine.compute_windows() → DeployWindowDay[]
 GET /deploy-status/today   → same, but single day + adds can_deploy_now boolean
 GET /public/status         → all clients, no auth required; merges GA4 realtime + in-memory tracker for active users
+GET /public/calendar       → all clients, no auth required; month grid of merged deploy status, used by /landing
 ```
+
+**Traffic-threshold override**: `Client.user_threshold` (nullable int) lets a client force `BLOQUEADO` when live traffic spikes, independent of any promotion. In `GET /public/status`, if `user_threshold` is set and current active users (GA4 realtime if configured, else the in-memory tracker) reach or exceed it, the engine's computed status is overridden to `BLOQUEADO` and `can_deploy_now` is forced `False`. This override is UI-facing only (`/landing`, `/public/status`) — it does not touch `compute_windows()`/`compute_day_status()` in the rules engine itself, and is not applied by the authenticated `/deploy-windows` or `/deploy-status/today` endpoints.
 
 ### Scheduler (APScheduler)
 
@@ -96,7 +101,9 @@ GET /public/status         → all clients, no auth required; merges GA4 realtim
 
 ### GA4 integration
 
-GA4 service account credentials are stored as JSON in the `integration_configs` table under key `ga4_service_account`. Clients can have a `ga4_property_id`; `GET /ga4/realtime` fetches active users for all configured clients in parallel (up to 8 threads). The public status endpoint uses GA4 data when available, with a fallback to the in-memory GTM tracker (`services/tracker.py`) which counts page view events in a 5-minute sliding window.
+GA4 service account credentials are stored as JSON in the `integration_configs` table under key `ga4_service_account`. Clients can have a `ga4_property_id`; `GET /ga4/realtime` fetches active users for all configured clients in parallel (up to 8 threads). The public status endpoint uses GA4 data when available, with a fallback to the in-memory GTM tracker (`services/tracker.py`) which counts page view events in a 5-minute sliding window. The tracker is fed by `GET /tracking/{client_id}/ping` — a public, CORS-open endpoint returning a 1x1 GIF so it can be fired as a GTM Custom Image tag. Tracker state is per-process memory (lost on restart, not shared across workers).
+
+`IntegrationConfig` doubles as generic key/value storage beyond GA4 creds: `GET /public/status` tracks the day's ecosystem-wide peak concurrent users under key `ecosystem_peak_today` (`{"date": ..., "peak": ...}`), persisted on every new peak so it survives container restarts (`tracker.set_peak_state()` reloads it at startup).
 
 ### Auth
 
@@ -113,6 +120,12 @@ Frontend: JWT stored in a cookie (`access_token`, 1-day expiry) via `js-cookie`.
 | `/promotions` | List + create form (create/delete for admin + comercial) |
 | `/admin` | Tabbed admin panel: Countries, Clients, Deploy Rules, Notifications (Google Chat), GA4, Repositories, Teams |
 | `/landing` | Public-facing status page (no login required) |
+
+### Schema changes / DB init
+
+The container does **not** just run `alembic upgrade head`. It runs `python -m app.db.init_db`, which handles three cases: fresh DB → `create_all` + `alembic stamp head`; legacy DB with no `alembic_version` → `create_all` + `_patch_missing_columns()` (hand-written `ALTER TABLE`s) + stamp; tracked DB → `alembic upgrade head`. `main.py`'s lifespan also calls `Base.metadata.create_all` on every startup.
+
+When adding a column: update the model, add an Alembic migration in `backend/alembic/versions/` (numbered `00N_*.py`), and if legacy (untracked) DBs must keep working, also add it to `_patch_missing_columns()` in `init_db.py`. The docker-compose `command:` additionally pre-patches `clients.logo_*` columns inline.
 
 ### Data model relationships
 
@@ -134,6 +147,8 @@ NotificationConfig (singleton row) — Google Chat webhook + up to 3 daily notif
 ### Repository linking
 
 Clients that share a repository are linked via the `Repository` model (`/admin` → Repositorios tab). When computing deploy windows or today's status for a client, the engine collects promotions from **all clients sharing the same repository** and returns the most restrictive result. This covers `GET /deploy-windows`, `GET /deploy-status/today`, `GET /public/status`, and Google Chat notifications.
+
+Note: README.md describes a `mobile/` (Expo) app that does not exist in this repo — ignore that section.
 
 ## Seed credentials
 

@@ -2,6 +2,58 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Semantic tokens for the public status page (/landing).
+   One color = one meaning: libre / aviso / bloq are reserved for deploy status.
+   Values are RGB triplets so Tailwind can apply alpha. Contrast figures are
+   against `card` (WCAG 2.x). */
+:root {
+  --canvas: 244 245 247;   /* #F4F5F7 */
+  --card:   255 255 255;   /* #FFFFFF */
+  --ink:    17 24 39;      /* #111827  17.7:1 */
+  --ink-2:  75 85 99;      /* #4B5563   7.6:1 */
+  --ink-3:  95 102 114;    /* #5F6672   5.8:1 */
+  --line:   217 221 227;   /* #D9DDE3 */
+
+  --libre:       21 128 61;   /* #15803D 5.0:1 */
+  --libre-fill:  21 128 61;
+  --on-libre:    255 255 255; /* 5.0:1 on fill */
+  --libre-tint:  234 247 238; /* #EAF7EE, libre text 4.6:1 */
+
+  --aviso:       161 92 7;    /* #A15C07 5.2:1 */
+  --aviso-fill:  245 179 0;   /* #F5B300 */
+  --on-aviso:    59 35 0;     /* #3B2300 7.9:1 on fill */
+  --aviso-tint:  253 244 220; /* #FDF4DC, aviso text 4.7:1 */
+
+  --bloq:        180 35 24;   /* #B42318 6.6:1 */
+  --bloq-fill:   200 38 26;   /* #C8261A */
+  --on-bloq:     255 255 255; /* 5.6:1 on fill */
+  --bloq-tint:   253 236 235; /* #FDECEB, bloq text 5.8:1 */
+}
+
+.dark {
+  --canvas: 14 18 25;      /* #0E1219 */
+  --card:   23 28 38;      /* #171C26 */
+  --ink:    242 244 247;   /* #F2F4F7 15.5:1 */
+  --ink-2:  182 189 200;   /* #B6BDC8  9.0:1 */
+  --ink-3:  142 151 166;   /* #8E97A6  5.8:1 */
+  --line:   43 51 66;      /* #2B3342 */
+
+  --libre:       74 222 128;  /* #4ADE80 9.8:1 */
+  --libre-fill:  74 222 128;
+  --on-libre:    14 18 25;    /* 10.8:1 on fill */
+  --libre-tint:  20 39 28;    /* #14271C */
+
+  --aviso:       251 191 36;  /* #FBBF24 10.2:1 */
+  --aviso-fill:  251 191 36;
+  --on-aviso:    14 18 25;    /* 11.2:1 on fill */
+  --aviso-tint:  43 36 18;    /* #2B2412 */
+
+  --bloq:        248 113 113; /* #F87171 6.2:1 */
+  --bloq-fill:   248 113 113;
+  --on-bloq:     14 18 25;    /* 6.8:1 on fill */
+  --bloq-tint:   46 23 25;    /* #2E1719 */
+}
+
 body {
   @apply bg-gray-50 text-gray-900 dark:bg-navy-900 dark:text-white;
 }

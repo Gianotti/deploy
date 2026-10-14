@@ -13,9 +13,20 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const [theme, setTheme] = useState<Theme>("dark");
 
   useEffect(() => {
-    const stored = (localStorage.getItem("theme") as Theme | null) ?? "dark";
-    setTheme(stored);
-    document.documentElement.classList.toggle("dark", stored === "dark");
+    // An explicit choice (from the navbar toggle) wins; otherwise follow the OS appearance.
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    const apply = (t: Theme) => {
+      setTheme(t);
+      document.documentElement.classList.toggle("dark", t === "dark");
+    };
+    const stored = localStorage.getItem("theme") as Theme | null;
+    apply(stored ?? (mq.matches ? "dark" : "light"));
+    if (stored) return;
+    const onChange = (e: MediaQueryListEvent) => {
+      if (!localStorage.getItem("theme")) apply(e.matches ? "dark" : "light");
+    };
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
   }, []);
 
   function toggle() {

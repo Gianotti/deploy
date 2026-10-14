@@ -8,17 +8,16 @@ const DAYS_ES   = ["Lun","Mar","Mié","Jue","Vie","Sáb","Dom"];
 
 type Status = "LIBRE" | "RESTRINGIDO" | "BLOQUEADO";
 
-const STATUS_CFG: Record<Status, { cell: string; text: string; badge: string; label: string }> = {
-  LIBRE:       { cell: "bg-white dark:bg-navy-800",                       text: "text-gray-700 dark:text-gray-300", badge: "bg-green-500",  label: "Libre" },
-  RESTRINGIDO: { cell: "bg-yellow-50 dark:bg-yellow-900/20 border-yellow-200 dark:border-yellow-700", text: "text-yellow-700 dark:text-yellow-300", badge: "bg-yellow-400", label: "Con aviso" },
-  BLOQUEADO:   { cell: "bg-red-50    dark:bg-red-900/20    border-red-200    dark:border-red-700",    text: "text-red-700    dark:text-red-300",    badge: "bg-red-500",    label: "Bloqueado" },
+const FOCUS = "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink focus-visible:ring-offset-2 focus-visible:ring-offset-card";
+
+// Color tokens live in globals.css; class names are literal so Tailwind can see them.
+const STATUS_CFG: Record<Status, { cell: string; text: string; fill: string; label: string }> = {
+  LIBRE:       { cell: "bg-card border-line",            text: "text-ink",   fill: "bg-libre-fill text-libre-on", label: "Libre" },
+  RESTRINGIDO: { cell: "bg-aviso-tint border-transparent", text: "text-aviso", fill: "bg-aviso-fill text-aviso-on", label: "Con aviso" },
+  BLOQUEADO:   { cell: "bg-bloq-tint border-transparent",  text: "text-bloq",  fill: "bg-bloq-fill text-bloq-on",   label: "Bloqueado" },
 };
 
-const CLIENT_STATUS_CFG: Record<string, { dot: string; text: string }> = {
-  LIBRE:       { dot: "bg-green-500",  text: "text-green-600 dark:text-green-400" },
-  RESTRINGIDO: { dot: "bg-yellow-400", text: "text-yellow-600 dark:text-yellow-400" },
-  BLOQUEADO:   { dot: "bg-red-500",    text: "text-red-600 dark:text-red-400" },
-};
+const ORDER: Status[] = ["BLOQUEADO", "RESTRINGIDO", "LIBRE"];
 
 export default function PublicMonthCalendar() {
   const today = new Date();
@@ -59,73 +58,63 @@ export default function PublicMonthCalendar() {
   const blockedDays  = days.filter(d => d.merged_status === "BLOQUEADO").length;
   const restrictDays = days.filter(d => d.merged_status === "RESTRINGIDO").length;
 
+  const navBtn = `w-9 h-9 flex items-center justify-center rounded-lg border border-line text-ink-2 hover:bg-canvas hover:text-ink transition cursor-pointer ${FOCUS}`;
+
   return (
     <div className="space-y-5">
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
-        <div className="flex items-center gap-3">
-          <svg className="w-5 h-5 text-gray-400 dark:text-gray-500 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-            <rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
-          </svg>
-          <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wide">
-            Calendario de restricciones — todos los clientes
-          </h3>
-        </div>
-        {/* Legend */}
-        <div className="flex items-center gap-3 text-xs">
-          {(["BLOQUEADO","RESTRINGIDO","LIBRE"] as Status[]).map(s => (
-            <span key={s} className="flex items-center gap-1.5 text-gray-500 dark:text-gray-400">
-              <span className={`w-2.5 h-2.5 rounded-sm ${STATUS_CFG[s].badge}`} />
+        <h2 className="text-[17px] font-semibold text-ink">Calendario de restricciones</h2>
+        <ul className="flex items-center gap-4 text-[13px] text-ink-2" aria-label="Referencias">
+          {ORDER.map(s => (
+            <li key={s} className="flex items-center gap-1.5">
+              <span className={`w-3 h-3 rounded-sm ${STATUS_CFG[s].fill}`} aria-hidden />
               {STATUS_CFG[s].label}
-            </span>
+            </li>
           ))}
-        </div>
+        </ul>
       </div>
 
       {/* Month nav + summary */}
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div className="flex items-center gap-2">
-          <button onClick={prevMonth} aria-label="Mes anterior"
-            className="w-8 h-8 flex items-center justify-center rounded-lg border border-gray-200 dark:border-navy-700 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-navy-700 transition cursor-pointer">
-            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polyline points="15 18 9 12 15 6"/></svg>
+          <button onClick={prevMonth} aria-label="Mes anterior" className={navBtn}>
+            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" aria-hidden><polyline points="15 18 9 12 15 6"/></svg>
           </button>
-          <span className="text-base font-bold text-gray-900 dark:text-white min-w-[160px] text-center tabular-nums">
+          <span className="text-[15px] font-semibold text-ink min-w-[150px] text-center tabular-nums" aria-live="polite">
             {MONTHS_ES[month - 1]} {year}
           </span>
-          <button onClick={nextMonth} aria-label="Mes siguiente"
-            className="w-8 h-8 flex items-center justify-center rounded-lg border border-gray-200 dark:border-navy-700 text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-navy-700 transition cursor-pointer">
-            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polyline points="9 18 15 12 9 6"/></svg>
+          <button onClick={nextMonth} aria-label="Mes siguiente" className={navBtn}>
+            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" aria-hidden><polyline points="9 18 15 12 9 6"/></svg>
           </button>
         </div>
         {!loading && days.length > 0 && (
-          <div className="flex items-center gap-3 text-xs text-gray-500 dark:text-gray-400">
-            {blockedDays > 0  && <span className="text-red-600    dark:text-red-400    font-semibold">{blockedDays}  bloqueado{blockedDays  > 1 ? "s" : ""}</span>}
-            {restrictDays > 0 && <span className="text-yellow-600 dark:text-yellow-400 font-semibold">{restrictDays} con aviso{restrictDays > 1 ? "" : ""}</span>}
-            {blockedDays === 0 && restrictDays === 0 && <span className="text-green-600 dark:text-green-400 font-semibold">Mes libre</span>}
-          </div>
+          <p className="text-[13px] text-ink-2 tabular-nums">
+            {blockedDays === 0 && restrictDays === 0 ? "Sin restricciones este mes" : [
+              blockedDays > 0 && `${blockedDays} día${blockedDays > 1 ? "s" : ""} bloqueado${blockedDays > 1 ? "s" : ""}`,
+              restrictDays > 0 && `${restrictDays} con aviso`,
+            ].filter(Boolean).join(" · ")}
+          </p>
         )}
       </div>
 
       {/* Grid + detail panel */}
       <div className="flex gap-5 flex-col lg:flex-row">
-        {/* Calendar grid */}
         <div className="flex-1 min-w-0">
-          {/* Day headers */}
-          <div className="grid grid-cols-7 mb-1">
+          <div className="grid grid-cols-7 mb-1" aria-hidden>
             {DAYS_ES.map(d => (
-              <div key={d} className={`text-center text-xs font-semibold py-1.5 ${d === "Sáb" || d === "Dom" ? "text-gray-300 dark:text-gray-600" : "text-gray-400 dark:text-gray-500"}`}>{d}</div>
+              <div key={d} className="text-center text-xs font-medium py-1.5 text-ink-3">{d}</div>
             ))}
           </div>
 
           {loading ? (
             <div className="grid grid-cols-7 gap-1">
               {Array.from({ length: 35 }).map((_, i) => (
-                <div key={i} className="h-14 rounded-lg bg-gray-100 dark:bg-navy-700 animate-pulse" />
+                <div key={i} className="h-14 rounded-lg bg-line motion-safe:animate-pulse" />
               ))}
             </div>
           ) : (
             <div className="grid grid-cols-7 gap-1">
-              {/* Blank cells for offset */}
               {Array.from({ length: firstDOW }).map((_, i) => <div key={`b${i}`} />)}
               {days.map(day => {
                 const s = day.merged_status as Status;
@@ -135,25 +124,26 @@ export default function PublicMonthCalendar() {
                 const isSelected = selected?.date === day.date;
                 const hasPromos = day.total_promo_count > 0;
                 const dayNum = parseInt(day.date.slice(8));
+                const label = `${dayNum} de ${MONTHS_ES[month - 1]}${isToday ? ", hoy" : ""}: ${cfg.label}${hasPromos ? `, ${day.active_client_count} cliente${day.active_client_count > 1 ? "s" : ""} con restricciones` : ""}`;
 
                 return (
                   <button
                     key={day.date}
                     onClick={() => setSelected(isSelected ? null : day)}
-                    aria-label={`${day.date}: ${cfg.label}`}
-                    className={`relative rounded-lg border p-1.5 text-left transition cursor-pointer min-h-[52px] flex flex-col
+                    aria-label={label}
+                    aria-pressed={isSelected}
+                    aria-current={isToday ? "date" : undefined}
+                    className={`relative rounded-lg border p-1.5 text-left cursor-pointer min-h-[52px] flex flex-col transition-colors ${FOCUS}
                       ${cfg.cell}
-                      ${isSelected  ? "ring-2 ring-accent ring-offset-1 dark:ring-offset-navy-900" : ""}
-                      ${isToday     ? "ring-2 ring-accent/60 ring-offset-1 dark:ring-offset-navy-900" : ""}
-                      ${isPast && !hasPromos ? "opacity-50" : ""}
-                      hover:brightness-95 dark:hover:brightness-110 active:scale-95
+                      ${isSelected ? "!border-ink ring-2 ring-ink" : isToday ? "!border-ink" : ""}
+                      hover:brightness-95 dark:hover:brightness-125
                     `}
                   >
-                    <span className={`text-xs font-bold leading-none ${isToday ? "text-accent" : cfg.text} ${isPast ? "opacity-70" : ""}`}>
+                    <span className={`text-xs leading-none tabular-nums ${isToday ? "font-bold text-ink" : isPast ? "font-medium text-ink-3" : `font-semibold ${cfg.text}`}`}>
                       {dayNum}
                     </span>
                     {hasPromos && (
-                      <span className={`mt-auto self-end text-[10px] font-bold px-1 rounded ${cfg.badge} text-white leading-tight`}>
+                      <span className={`mt-auto self-end text-xs font-semibold px-1.5 rounded tabular-nums leading-tight ${cfg.fill}`}>
                         {day.active_client_count}
                       </span>
                     )}
@@ -163,21 +153,17 @@ export default function PublicMonthCalendar() {
             </div>
           )}
 
-          <p className="text-xs text-gray-400 dark:text-gray-600 mt-3 text-center">
-            El número en la celda indica cuántos clientes tienen restricciones ese día · Hacé clic en un día para ver el detalle
+          <p className="text-[13px] text-ink-3 mt-3">
+            El número indica cuántos clientes tienen restricciones ese día. Elegí un día para ver el detalle.
           </p>
         </div>
 
-        {/* Detail panel */}
-        <div className="lg:w-72 shrink-0">
+        <div className="lg:w-80 shrink-0">
           {selected ? (
             <DayDetail day={selected} todayStr={todayStr} onClose={() => setSelected(null)} />
           ) : (
-            <div className="h-full min-h-[180px] flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-gray-200 dark:border-navy-700 text-gray-400 dark:text-gray-600 gap-2 p-6">
-              <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
-              </svg>
-              <p className="text-sm text-center">Seleccioná un día para ver el detalle por cliente</p>
+            <div className="h-full min-h-[160px] flex items-center justify-center rounded-xl border border-dashed border-line p-6">
+              <p className="text-[13px] text-ink-3 text-center">Elegí un día para ver qué clientes tienen restricciones</p>
             </div>
           )}
         </div>
@@ -198,77 +184,66 @@ function DayDetail({ day, todayStr, onClose }: { day: PublicCalDay; todayStr: st
   ];
   const dateLabel = new Date(y, m, d).toLocaleDateString("es-AR", { weekday: "long", day: "numeric", month: "long" });
 
-  const affectedClients  = day.clients.filter(c => c.active_promo_count > 0);
+  const affectedClients   = day.clients.filter(c => c.active_promo_count > 0);
   const unaffectedClients = day.clients.filter(c => c.active_promo_count === 0);
 
   return (
-    <div className="rounded-xl border border-gray-200 dark:border-navy-700 bg-white dark:bg-navy-800 overflow-hidden shadow-sm dark:shadow-none">
-      {/* Header */}
-      <div className={`px-4 py-3 flex items-start justify-between gap-2 ${
-        s === "BLOQUEADO"   ? "bg-red-50    dark:bg-red-900/20"    :
-        s === "RESTRINGIDO" ? "bg-yellow-50 dark:bg-yellow-900/20" :
-        "bg-gray-50 dark:bg-navy-900"
-      }`}>
+    <div className="rounded-xl border border-line bg-card overflow-hidden">
+      <div className={`px-4 py-3 flex items-start justify-between gap-2 ${s === "LIBRE" ? "bg-canvas" : cfg.cell}`}>
         <div>
-          <p className="text-xs text-gray-500 dark:text-gray-400 capitalize">{dateLabel}</p>
-          <div className="flex items-center gap-2 mt-1">
-            <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${cfg.badge}`} />
-            <span className={`text-sm font-bold ${cfg.text}`}>{cfg.label}</span>
-            {isToday && <span className="text-xs font-bold text-accent">— hoy</span>}
-          </div>
+          <p className="text-[13px] text-ink-2 first-letter:uppercase">{dateLabel}{isToday && " · hoy"}</p>
+          <p className={`text-[15px] font-semibold mt-0.5 ${cfg.text}`}>{cfg.label}</p>
         </div>
-        <button onClick={onClose} aria-label="Cerrar"
-          className="text-gray-400 hover:text-gray-700 dark:hover:text-white transition cursor-pointer mt-0.5 shrink-0">
-          <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        <button onClick={onClose} aria-label="Cerrar detalle"
+          className={`w-8 h-8 -mr-1.5 flex items-center justify-center rounded-lg text-ink-3 hover:text-ink transition cursor-pointer shrink-0 ${FOCUS}`}>
+          <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" aria-hidden><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
       </div>
 
-      {/* Client list */}
-      <div className="divide-y divide-gray-100 dark:divide-navy-700 max-h-[380px] overflow-y-auto">
+      <div className="divide-y divide-line max-h-[380px] overflow-y-auto">
         {day.clients.length === 0 && (
-          <p className="text-sm text-gray-400 text-center py-6">Sin datos de clientes</p>
+          <p className="text-[13px] text-ink-3 text-center py-6">Sin datos de clientes</p>
         )}
         {affectedClients.map(c => <ClientRow key={c.client_id} client={c} />)}
         {unaffectedClients.length > 0 && affectedClients.length > 0 && (
-          <p className="text-xs text-gray-400 dark:text-gray-600 px-4 py-2 font-medium uppercase tracking-wide">Sin restricciones</p>
+          <p className="text-xs font-medium text-ink-3 px-4 pt-3 pb-1">Sin restricciones</p>
         )}
         {unaffectedClients.map(c => <ClientRow key={c.client_id} client={c} />)}
       </div>
 
       {day.total_promo_count > 0 && (
-        <div className="px-4 py-2 border-t border-gray-100 dark:border-navy-700 bg-gray-50 dark:bg-navy-900">
-          <p className="text-xs text-gray-400">{day.total_promo_count} promo{day.total_promo_count > 1 ? "s" : ""} activa{day.total_promo_count > 1 ? "s" : ""} en total</p>
+        <div className="px-4 py-2 border-t border-line bg-canvas">
+          <p className="text-xs text-ink-3">{day.total_promo_count} promo{day.total_promo_count > 1 ? "s" : ""} activa{day.total_promo_count > 1 ? "s" : ""} en total</p>
         </div>
       )}
     </div>
   );
 }
 
-const PROMO_TYPE_CFG: Record<string, { label: string; bg: string; text: string }> = {
-  PROMO_ESPECIAL: { label: "Especial", bg: "bg-red-100 dark:bg-red-900/30",    text: "text-red-600 dark:text-red-400" },
-  PROMO_NORMAL:   { label: "Comunicación", bg: "bg-amber-100 dark:bg-amber-900/30", text: "text-amber-600 dark:text-amber-400" },
+const PROMO_TYPE_LABEL: Record<string, string> = {
+  PROMO_ESPECIAL: "Especial",
+  PROMO_NORMAL:   "Comunicación",
 };
 
 function CriticalityDots({ value }: { value: number }) {
   return (
-    <span className="flex items-center gap-0.5" aria-label={`Criticidad ${value} de 5`}>
+    <span className="flex items-center gap-0.5 mt-1" role="img" aria-label={`Criticidad ${value} de 5`}>
       {Array.from({ length: 5 }).map((_, i) => (
-        <span key={i} className={`w-1.5 h-1.5 rounded-full ${i < value ? "bg-gray-500 dark:bg-gray-400" : "bg-gray-200 dark:bg-gray-700"}`} />
+        <span key={i} className={`w-1.5 h-1.5 rounded-full ${i < value ? "bg-ink-2" : "bg-line"}`} />
       ))}
     </span>
   );
 }
 
 function PromoLine({ promo }: { promo: PublicPromoInfo }) {
-  const tc = PROMO_TYPE_CFG[promo.promo_type] ?? PROMO_TYPE_CFG.PROMO_NORMAL;
   return (
     <div className="flex items-start gap-2 py-1">
-      <span className={`shrink-0 mt-0.5 text-[10px] font-bold px-1.5 py-0.5 rounded ${tc.bg} ${tc.text}`}>
-        {tc.label}
+      <span className="shrink-0 mt-0.5 text-xs font-medium px-1.5 py-0.5 rounded bg-canvas text-ink-2">
+        {PROMO_TYPE_LABEL[promo.promo_type] ?? promo.promo_type}
       </span>
       <div className="flex-1 min-w-0">
-        <p className="text-xs text-gray-600 dark:text-gray-300 leading-snug">
-          {promo.description || <span className="italic text-gray-400">Sin descripción</span>}
+        <p className="text-[13px] text-ink-2 leading-snug">
+          {promo.description || <span className="italic text-ink-3">Sin descripción</span>}
         </p>
         <CriticalityDots value={promo.criticality} />
       </div>
@@ -277,25 +252,24 @@ function PromoLine({ promo }: { promo: PublicPromoInfo }) {
 }
 
 function ClientRow({ client }: { client: PublicCalDayClient }) {
-  const cfg = CLIENT_STATUS_CFG[client.deploy_status] ?? CLIENT_STATUS_CFG.LIBRE;
+  const s = (client.deploy_status as Status) in STATUS_CFG ? client.deploy_status as Status : "LIBRE";
   const hasPromos = client.active_promos.length > 0;
 
   return (
     <div className={`px-4 ${hasPromos ? "py-3" : "py-2.5"}`}>
-      {/* Client header */}
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2 min-w-0">
-          <span className={`w-2 h-2 rounded-full shrink-0 ${cfg.dot}`} />
-          <span className="text-sm text-gray-700 dark:text-gray-300 truncate font-semibold">{client.client_name}</span>
+          <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${STATUS_CFG[s].fill}`} aria-hidden />
+          <span className="text-[13px] font-semibold text-ink truncate">{client.client_name}</span>
+          <span className="sr-only">: {STATUS_CFG[s].label}</span>
         </div>
         {client.window_start && (
-          <span className="text-xs font-mono text-yellow-500 shrink-0">{client.window_start}–{client.window_end}</span>
+          <span className="text-xs font-medium text-aviso shrink-0 tabular-nums">{client.window_start.slice(0, 5)}–{client.window_end?.slice(0, 5)}</span>
         )}
       </div>
 
-      {/* Promo list */}
       {hasPromos && (
-        <div className="mt-2 ml-4 pl-2 border-l-2 border-gray-100 dark:border-navy-700 space-y-0.5">
+        <div className="mt-2 ml-1 pl-3 border-l-2 border-line space-y-0.5">
           {client.active_promos.map((p, i) => (
             <PromoLine key={i} promo={p} />
           ))}

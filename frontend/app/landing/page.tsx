@@ -1,308 +1,366 @@
 "use client";
 
 import Image from "next/image";
+import Link from "next/link";
 import { useEffect, useState, useCallback } from "react";
 import { getPublicStatus, getPublicTeams, type ClientStatus, type PublicTeam } from "@/lib/api";
 import PublicMonthCalendar from "@/components/PublicMonthCalendar";
-import { useTheme } from "@/lib/theme";
 import ClientAvatar from "@/components/ClientAvatar";
 
 const REFRESH_SECS = 60;
+const DAY_MIN = 24 * 60;
 
-const STATUS_CONFIG = {
-  LIBRE: {
-    bg: "bg-green-500", glow: "shadow-[0_0_32px_rgba(34,197,94,0.5)]",
-    border: "border-green-300 dark:border-green-600",
-    cardBg: "bg-white dark:bg-navy-800",
-    text: "text-green-600 dark:text-green-400",
-    labelBg: "bg-green-50 dark:bg-navy-900",
-    label: "LIBRE", sublabel: "Podés deployar",
-  },
-  RESTRINGIDO: {
-    bg: "bg-yellow-400", glow: "shadow-[0_0_32px_rgba(250,204,21,0.5)]",
-    border: "border-yellow-300 dark:border-yellow-500",
-    cardBg: "bg-white dark:bg-navy-800",
-    text: "text-yellow-600 dark:text-yellow-400",
-    labelBg: "bg-yellow-50 dark:bg-navy-900",
-    label: "CON AVISO", sublabel: "Deploy posible avisando",
-  },
-  BLOQUEADO: {
-    bg: "bg-red-500", glow: "shadow-[0_0_32px_rgba(239,68,68,0.5)]",
-    border: "border-red-300 dark:border-red-600",
-    cardBg: "bg-white dark:bg-navy-800",
-    text: "text-red-600 dark:text-red-400",
-    labelBg: "bg-red-50 dark:bg-navy-900",
-    label: "BLOQUEADO", sublabel: "No deployar hoy",
-  },
-} as const;
+type Status = ClientStatus["deploy_status"];
 
-function StatusIcon({ status }: { status: keyof typeof STATUS_CONFIG }) {
-  if (status === "LIBRE") return (
-    <svg viewBox="0 0 24 24" className="w-8 h-8" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-      <polyline points="20 6 9 17 4 12" />
-    </svg>
-  );
-  if (status === "RESTRINGIDO") return (
-    <svg viewBox="0 0 24 24" className="w-8 h-8" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
-      <line x1="12" y1="9" x2="12" y2="13" />
-      <line x1="12" y1="17" x2="12.01" y2="17" />
-    </svg>
-  );
+// Literal class names so Tailwind can see them. Color tokens live in globals.css.
+const STATUS: Record<Status, {
+  label: string; group: string; id: string;
+  text: string; fill: string; tint: string;
+}> = {
+  BLOQUEADO:   { label: "Bloqueado", group: "Bloqueados", id: "bloqueados", text: "text-bloq",  fill: "bg-bloq-fill text-bloq-on",   tint: "bg-bloq-tint" },
+  RESTRINGIDO: { label: "Con aviso", group: "Con aviso",  id: "con-aviso",  text: "text-aviso", fill: "bg-aviso-fill text-aviso-on", tint: "bg-aviso-tint" },
+  LIBRE:       { label: "Libre",     group: "Libres",     id: "libres",     text: "text-libre", fill: "bg-libre-fill text-libre-on", tint: "bg-libre-tint" },
+};
+const ORDER: Status[] = ["BLOQUEADO", "RESTRINGIDO", "LIBRE"];
+
+const FOCUS = "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink focus-visible:ring-offset-2 focus-visible:ring-offset-canvas";
+
+// ── Time helpers ──────────────────────────────────────────────────────────────
+
+const toMin = (hhmm: string) => {
+  const [h, m] = hhmm.split(":").map(Number);
+  return h * 60 + (m || 0);
+};
+const fmtMin = (min: number) =>
+  `${String(Math.floor(min / 60)).padStart(2, "0")}:${String(min % 60).padStart(2, "0")}`;
+const hhmm = (s: string) => s.slice(0, 5);
+
+function localMinutes(timeZone: string, now: Date): number | null {
+  try {
+    const parts = new Intl.DateTimeFormat("en-GB", { timeZone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(now);
+    const get = (t: string) => Number(parts.find((p) => p.type === t)?.value);
+    return get("hour") * 60 + get("minute");
+  } catch {
+    return null;
+  }
+}
+
+const n = (v: number) => v.toLocaleString("es-AR");
+
+// ── Status glyph: shape doubles the color so status never relies on hue alone ─
+
+function StatusGlyph({ status, className = "w-3.5 h-3.5" }: { status: Status; className?: string }) {
+  const common = { className, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 3, strokeLinecap: "round" as const, strokeLinejoin: "round" as const, "aria-hidden": true };
+  if (status === "LIBRE") return <svg {...common}><polyline points="20 6 9 17 4 12" /></svg>;
+  if (status === "RESTRINGIDO") return <svg {...common}><line x1="12" y1="6" x2="12" y2="13" /><line x1="12" y1="18" x2="12.01" y2="18" /></svg>;
+  return <svg {...common}><line x1="6" y1="12" x2="18" y2="12" /></svg>;
+}
+
+function StatusPill({ status }: { status: Status }) {
+  const s = STATUS[status];
   return (
-    <svg viewBox="0 0 24 24" className="w-8 h-8" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="12" cy="12" r="10" />
-      <line x1="4.93" y1="4.93" x2="19.07" y2="19.07" />
-    </svg>
+    <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[13px] font-semibold shrink-0 ${s.fill}`}>
+      <StatusGlyph status={status} />
+      {s.label}
+    </span>
   );
 }
 
-function ClientCard({ client }: { client: ClientStatus }) {
-  const cfg = STATUS_CONFIG[client.deploy_status];
-  const logoUrl = `/api/clients/${client.client_id}/logo`;
+// ── Verdict sentence per client ───────────────────────────────────────────────
+
+function verdict(c: ClientStatus): string {
+  if (c.traffic_blocked && c.user_threshold != null && c.ga4_active_users != null) {
+    return `Tráfico sobre el umbral: ${n(c.ga4_active_users)} usuarios (límite ${n(c.user_threshold)})`;
+  }
+  if (c.deploy_status === "BLOQUEADO") return "Promo crítica en curso. No deployar hoy.";
+  if (c.deploy_status === "RESTRINGIDO") {
+    if (c.window_start && c.window_end) {
+      const w = `${hhmm(c.window_start)} a ${hhmm(c.window_end)}`;
+      return c.can_deploy_now
+        ? `Dentro de la ventana hasta las ${hhmm(c.window_end)}. Avisá a comercial.`
+        : `Fuera de ventana. Permitido de ${w}.`;
+    }
+    return "Deploy posible avisando a comercial.";
+  }
+  return "Podés deployar ahora.";
+}
+
+// ── Signature: the day ruler ──────────────────────────────────────────────────
+// A 24 h track in the client's local time. Colored = when a deploy is allowed;
+// hatched red = blocked all day; the vertical mark is "now" in that timezone.
+
+function DayRuler({ client, now }: { client: ClientStatus; now: Date }) {
+  const status = client.deploy_status;
+  const nowMin = localMinutes(client.timezone, now);
+  const hasWindow = status === "RESTRINGIDO" && client.window_start && client.window_end;
+
+  let segments: [number, number][] = [];
+  if (status === "LIBRE") segments = [[0, DAY_MIN]];
+  else if (hasWindow) {
+    const a = toMin(client.window_start!), b = toMin(client.window_end!);
+    segments = a <= b ? [[a, b]] : [[0, b], [a, DAY_MIN]];
+  } else if (status === "RESTRINGIDO") segments = [[0, DAY_MIN]];
+
+  const pct = (m: number) => `${(m / DAY_MIN) * 100}%`;
+  const fill = status === "LIBRE" ? "bg-libre-fill" : "bg-aviso-fill";
+
+  const windowText =
+    status === "BLOQUEADO" ? "Sin ventana hoy"
+    : status === "LIBRE" ? "Todo el día"
+    : hasWindow ? `Ventana ${hhmm(client.window_start!)}–${hhmm(client.window_end!)}`
+    : "Todo el día, con aviso";
+
+  const label = `${windowText}. Hora local ${nowMin != null ? fmtMin(nowMin) : "desconocida"}.`;
 
   return (
-    <div className={`${cfg.cardBg} border-2 ${cfg.border} rounded-2xl p-5 flex flex-col gap-4 shadow-sm dark:shadow-none`}>
+    <div role="img" aria-label={label}>
+      <div className="flex items-baseline justify-between text-[13px] mb-2 tabular-nums">
+        <span className="text-ink-2">{windowText}</span>
+        {nowMin != null && <span className="text-ink-3">Ahora {fmtMin(nowMin)}</span>}
+      </div>
+      <div className="relative">
+        <div
+          className="relative h-2.5 rounded-full overflow-hidden bg-line"
+          style={status === "BLOQUEADO" ? {
+            backgroundImage: "repeating-linear-gradient(135deg, rgb(var(--bloq-fill)) 0 4px, rgb(var(--bloq-fill) / 0.35) 4px 8px)",
+          } : undefined}
+        >
+          {segments.map(([a, b]) => (
+            <div key={a} className={`absolute inset-y-0 ${fill}`} style={{ left: pct(a), width: pct(b - a) }} />
+          ))}
+        </div>
+        {nowMin != null && (
+          <div
+            className="absolute top-1/2 h-4 w-[3px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-ink ring-2 ring-card"
+            style={{ left: pct(nowMin) }}
+          />
+        )}
+      </div>
+      <div className="flex justify-between mt-1.5 text-xs text-ink-3 tabular-nums" aria-hidden>
+        <span>00</span><span>06</span><span>12</span><span>18</span><span>24</span>
+      </div>
+    </div>
+  );
+}
 
-      {/* Logo + status circle */}
-      <div className="flex items-center justify-between w-full gap-3">
+// ── Client card ───────────────────────────────────────────────────────────────
+
+function ClientCard({ client, now }: { client: ClientStatus; now: Date }) {
+  const users = client.ga4_active_users;
+
+  return (
+    <article className="rounded-2xl border border-line bg-card p-5 flex flex-col gap-4">
+      <header className="flex items-start justify-between gap-3">
         <div className="flex items-center gap-3 min-w-0">
           {client.has_logo ? (
-            <div className="w-14 h-14 rounded-xl overflow-hidden flex-shrink-0 bg-gray-50 dark:bg-navy-900 border border-gray-200 dark:border-navy-700">
-              <Image src={logoUrl} alt={client.client_name} width={56} height={56} className="object-contain w-full h-full" unoptimized />
+            <div className="w-10 h-10 rounded-lg overflow-hidden shrink-0 bg-canvas border border-line">
+              <Image src={`/api/clients/${client.client_id}/logo`} alt="" width={40} height={40} className="object-contain w-full h-full" unoptimized />
             </div>
           ) : (
-            <ClientAvatar name={client.client_name} size="lg" />
+            <ClientAvatar name={client.client_name} />
           )}
           <div className="min-w-0">
-            <p className="text-gray-900 dark:text-white font-black text-lg leading-tight truncate">{client.client_name}</p>
-            <p className="text-gray-500 dark:text-gray-400 text-xs mt-0.5">{client.country_name} · {client.country_iso}</p>
-            {client.active_promo_count > 0 && (
-              <p className="text-xs text-gray-400 mt-0.5">
-                {client.active_promo_count} promo{client.active_promo_count > 1 ? "s" : ""} activa{client.active_promo_count > 1 ? "s" : ""}
-              </p>
-            )}
-          </div>
-        </div>
-        <div className={`w-16 h-16 rounded-full ${cfg.bg} ${cfg.glow} flex items-center justify-center flex-shrink-0`}>
-          <StatusIcon status={client.deploy_status} />
-        </div>
-      </div>
-
-      {/* Status label */}
-      <div className={`w-full text-center rounded-xl py-2 ${cfg.labelBg}`}>
-        <p className={`text-lg font-black tracking-wide ${cfg.text}`}>{cfg.label}</p>
-        <p className="text-gray-500 text-xs mt-0.5">{cfg.sublabel}</p>
-      </div>
-
-      {client.window_start && (
-        <div className="bg-gray-50 dark:bg-navy-900 rounded-xl px-4 py-2 w-full text-center border border-gray-100 dark:border-navy-700">
-          <p className="text-xs text-gray-400 mb-0.5">Ventana permitida</p>
-          <p className="text-yellow-500 font-mono font-bold">{client.window_start} → {client.window_end}</p>
-        </div>
-      )}
-
-      {/* Usuarios activos + fuentes de tráfico */}
-      <div className={`rounded-xl px-4 py-3 w-full space-y-2 border ${
-        client.traffic_blocked
-          ? "bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800"
-          : "bg-gray-50 dark:bg-navy-900 border-gray-100 dark:border-navy-700"
-      }`}>
-        <div className="flex items-center justify-between gap-2">
-          <p className="text-xs text-gray-500">Usuarios activos ahora</p>
-          {client.ga4_active_users != null
-            ? <p className={`font-bold text-lg tabular-nums ${client.traffic_blocked ? "text-red-600 dark:text-red-400" : "text-blue-600 dark:text-blue-400"}`}>
-                <svg className="inline w-4 h-4 mr-1 mb-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
-                {client.ga4_active_users}
-              </p>
-            : <p className="text-gray-400 font-mono text-sm">—</p>}
-        </div>
-        {client.traffic_blocked && client.user_threshold != null && (
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="inline-flex items-center gap-1 text-xs font-bold px-2 py-0.5 rounded-full bg-red-500 text-white shrink-0">
-              <svg className="w-2.5 h-2.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M8 2v6M8 11v1"/><circle cx="8" cy="8" r="6.5"/></svg>
-              umbral superado
-            </span>
-            <p className="text-xs text-red-500 dark:text-red-400">
-              Deploy bloqueado — {client.ga4_active_users?.toLocaleString("es-AR")} usuarios superan el umbral de {client.user_threshold.toLocaleString("es-AR")}
+            <h3 className="text-[17px] font-semibold leading-tight text-ink [overflow-wrap:anywhere]">{client.client_name}</h3>
+            <p className="text-[13px] text-ink-3 mt-0.5">
+              {client.country_name}
+              {client.active_promo_count > 0 && ` · ${client.active_promo_count} promo${client.active_promo_count > 1 ? "s" : ""} activa${client.active_promo_count > 1 ? "s" : ""}`}
             </p>
           </div>
-        )}
-        {(() => {
-          const src = client.ga4_traffic_sources ?? {};
-          const hasSrc = Object.values(src).some(v => v > 0);
-          if (!hasSrc) return null;
-          return (
-            <div className="flex items-center gap-1.5 flex-wrap border-t border-gray-200 dark:border-navy-700 pt-2">
-              {src.paid > 0 && (
-                <span className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-400 border border-orange-200 dark:border-orange-800/40">
-                  <svg className="w-2.5 h-2.5" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1a7 7 0 100 14A7 7 0 008 1zm.75 10.5h-1.5v-1.5h1.5v1.5zm0-3h-1.5V4.5h1.5V8.5z"/></svg>
-                  pago {src.paid}
-                </span>
-              )}
-              {src.organic > 0 && (
-                <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800/40">
-                  <svg className="w-2.5 h-2.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="7" cy="7" r="5"/><path d="M13 13l-2-2"/></svg>
-                  org. {src.organic}
-                </span>
-              )}
-              {src.direct > 0 && (
-                <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-gray-100 dark:bg-navy-700 text-gray-600 dark:text-gray-400 border border-gray-200 dark:border-navy-600">
-                  <svg className="w-2.5 h-2.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M8 2v12M2 8h12" strokeLinecap="round"/></svg>
-                  dir. {src.direct}
-                </span>
-              )}
-              {src.other > 0 && (
-                <span className="inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full bg-gray-100 dark:bg-navy-700 text-gray-600 dark:text-gray-400 border border-gray-200 dark:border-navy-600">
-                  otros {src.other}
-                </span>
-              )}
-            </div>
-          );
-        })()}
+        </div>
+        <StatusPill status={client.deploy_status} />
+      </header>
+
+      <p className="text-[15px] leading-snug text-ink">{verdict(client)}</p>
+
+      <DayRuler client={client} now={now} />
+
+      <div className="flex items-baseline justify-between gap-3 border-t border-line pt-3">
+        <span className="text-[13px] text-ink-3">Usuarios ahora</span>
+        <span className="tabular-nums">
+          <span className={`text-[17px] font-semibold ${client.traffic_blocked ? "text-bloq" : "text-ink"}`}>
+            {users != null ? n(users) : "—"}
+          </span>
+          {client.user_threshold != null && (
+            <span className="text-[13px] text-ink-3"> / {n(client.user_threshold)}</span>
+          )}
+        </span>
       </div>
 
-      {/* Top eventos activos */}
-      <EventsPanel events={client.ga4_top_events ?? []} />
-
-      {/* Dispositivos + conversion rate + nuevos vs recurrentes */}
-      {(() => {
-        const dev = client.ga4_device_breakdown ?? {};
-        const devTotal = (dev.mobile ?? 0) + (dev.tablet ?? 0) + (dev.desktop ?? 0);
-        const mobilePct = devTotal > 0 ? Math.round(((dev.mobile ?? 0) + (dev.tablet ?? 0)) / devTotal * 100) : null;
-        const desktopPct = devTotal > 0 ? Math.round((dev.desktop ?? 0) / devTotal * 100) : null;
-        const cr = client.ga4_active_users
-          ? Math.round((client.ga4_conversions / client.ga4_active_users) * 1000) / 10
-          : null;
-        const nvr = client.ga4_new_vs_returning ?? {};
-        const nvrTotal = (nvr.new ?? 0) + (nvr.returning ?? 0);
-        const hasNvr = nvrTotal > 0;
-
-        if (mobilePct === null && cr === null && !hasNvr) return null;
-
-        return (
-          <div className="bg-gray-50 dark:bg-navy-900 rounded-xl px-4 py-3 w-full border border-gray-100 dark:border-navy-700">
-            <p className="text-xs text-gray-500 mb-2">Dispositivos, conversión y audiencia</p>
-            <div className="flex items-center gap-2 flex-wrap">
-              {mobilePct !== null && (
-                <>
-                  <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2 py-1 rounded-full bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-400 border border-violet-200 dark:border-violet-800/40">
-                    <svg className="w-3 h-3" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><rect x="4" y="1.5" width="8" height="13" rx="1.5"/><line x1="6.5" y1="12" x2="9.5" y2="12" strokeLinecap="round"/></svg>
-                    {mobilePct}% mobile
-                  </span>
-                  <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2 py-1 rounded-full bg-sky-100 dark:bg-sky-900/30 text-sky-700 dark:text-sky-400 border border-sky-200 dark:border-sky-800/40">
-                    <svg className="w-3 h-3" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><rect x="1.5" y="2.5" width="13" height="8.5" rx="1.2"/><line x1="5.5" y1="14" x2="10.5" y2="14" strokeLinecap="round"/><line x1="8" y1="11" x2="8" y2="14" strokeLinecap="round"/></svg>
-                    {desktopPct}% desktop
-                  </span>
-                </>
-              )}
-              {cr !== null && (
-                <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2 py-1 rounded-full bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 border border-green-200 dark:border-green-800/40">
-                  <svg className="w-3 h-3" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"><polyline points="1.5 11 6 6.5 9 9.5 14.5 4"/><polyline points="10.5 4 14.5 4 14.5 8"/></svg>
-                  CR {cr}%
-                </span>
-              )}
-              {hasNvr && (
-                <>
-                  <span className="inline-flex items-center gap-1.5 text-xs font-semibold px-2 py-1 rounded-full bg-cyan-100 dark:bg-cyan-900/30 text-cyan-700 dark:text-cyan-400 border border-cyan-200 dark:border-cyan-800/40">
-                    <svg className="w-3 h-3" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><circle cx="8" cy="5" r="2.5"/><path d="M3 14c0-2.8 2.2-5 5-5s5 2.2 5 5" strokeLinecap="round"/></svg>
-                    {nvr.new ?? 0} nuevos
-                  </span>
-                  <span className="inline-flex items-center gap-1.5 text-xs font-medium px-2 py-1 rounded-full bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800/40">
-                    <svg className="w-3 h-3" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><circle cx="5.5" cy="5" r="2"/><circle cx="10.5" cy="5" r="2"/><path d="M1.5 14c0-2.2 1.8-4 4-4s4 1.8 4 4" strokeLinecap="round"/><path d="M10.5 10c1.7.3 3 1.8 3 3.8" strokeLinecap="round"/></svg>
-                    {nvr.returning ?? 0} recurrentes
-                  </span>
-                </>
-              )}
-            </div>
-          </div>
-        );
-      })()}
-
-      {/* Top 3 URLs */}
-      {(client.ga4_top_pages ?? []).length > 0 && (
-        <div className="bg-gray-50 dark:bg-navy-900 rounded-xl px-4 py-3 w-full border border-gray-100 dark:border-navy-700">
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-xs text-gray-500">Páginas más visitadas</p>
-            <span className="text-xs text-gray-400 italic">usuarios ahora</span>
-          </div>
-          <div className="space-y-1.5">
-            {client.ga4_top_pages.map((p, i) => (
-              <div key={i} className="flex items-center justify-between gap-3">
-                <div className="flex items-center gap-1.5 min-w-0">
-                  <svg className="w-3 h-3 text-gray-400 shrink-0" viewBox="0 0 16 16" fill="none">
-                    <rect x="2" y="1" width="9" height="12" rx="1.5" stroke="currentColor" strokeWidth="1.4"/>
-                    <path d="M8 1v4h4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
-                    <path d="M4.5 8h5M4.5 10.5h3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
-                  </svg>
-                  <span className="text-xs font-mono text-gray-600 dark:text-gray-300 truncate">{p.path}</span>
-                </div>
-                <span className="text-xs font-semibold text-blue-600 dark:text-blue-400 tabular-nums shrink-0">{p.users}</span>
-              </div>
-            ))}
-          </div>
-          <p className="text-xs text-gray-400 mt-2 pt-2 border-t border-gray-200 dark:border-navy-700 leading-relaxed">
-            <svg className="inline w-3 h-3 mr-1 mb-0.5" viewBox="0 0 16 16" fill="none">
-              <rect x="2" y="1" width="9" height="12" rx="1.5" stroke="currentColor" strokeWidth="1.4"/>
-              <path d="M8 1v4h4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
-              <path d="M4.5 8h5M4.5 10.5h3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
-            </svg>
-            Path de la página · el número es la cantidad de usuarios activos en esa URL en este momento
-          </p>
-        </div>
-      )}
-    </div>
+      <TrafficDetails client={client} />
+    </article>
   );
 }
 
-// ── Events Panel ─────────────────────────────────────────────────────────────
+// ── Live traffic: progressive disclosure, neutral chips (color is reserved for status) ─
 
-const NOISE_EVENTS = new Set(["page_view","session_start","scroll","user_engagement","first_visit","first_open","click","gtm.dom","gtm.load","gtm.historyChange"]);
+const NOISE_EVENTS = new Set(["page_view", "session_start", "scroll", "user_engagement", "first_visit", "first_open", "click", "gtm.dom", "gtm.load", "gtm.historyChange"]);
 
-const EVENT_CFG: Record<string, { label: string; cls: string }> = {
-  purchase:          { label: "compra",          cls: "bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 border-green-200 dark:border-green-800/40" },
-  add_to_cart:       { label: "add al carrito",  cls: "bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-800/40" },
-  begin_checkout:    { label: "inicio checkout",  cls: "bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-800/40" },
-  checkout_start:    { label: "inicio checkout",  cls: "bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-800/40" },
-  add_payment_info:  { label: "pago",             cls: "bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-800/40" },
-  add_shipping_info: { label: "envío",            cls: "bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-800/40" },
-  login:             { label: "login",            cls: "bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 border-blue-200 dark:border-blue-800/40" },
-  sign_up:           { label: "registro",         cls: "bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 border-blue-200 dark:border-blue-800/40" },
+const EVENT_LABEL: Record<string, string> = {
+  purchase: "Compra", add_to_cart: "Agregar al carrito", begin_checkout: "Inicio checkout",
+  checkout_start: "Inicio checkout", add_payment_info: "Pago", add_shipping_info: "Envío",
+  login: "Login", sign_up: "Registro",
 };
 
-const DEFAULT_EVENT_CLS = "bg-gray-100 dark:bg-navy-700 text-gray-600 dark:text-gray-400 border-gray-200 dark:border-navy-600";
+const SOURCE_LABEL: Record<string, string> = { paid: "Pago", organic: "Orgánico", direct: "Directo", other: "Otros" };
 
-function EventsPanel({ events }: { events: { event: string; count: number }[] }) {
-  const visible = events.filter(e => !NOISE_EVENTS.has(e.event));
-  if (visible.length === 0) return null;
+function Chip({ label, value }: { label: string; value: string | number }) {
   return (
-    <div className="bg-gray-50 dark:bg-navy-900 rounded-xl px-4 py-3 w-full border border-gray-100 dark:border-navy-700">
-      <p className="text-xs text-gray-500 mb-2">Actividad en vivo</p>
-      <div className="flex items-center gap-1.5 flex-wrap">
-        {visible.map((e, i) => {
-          const cfg = EVENT_CFG[e.event];
-          return (
-            <span key={i} className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full border ${cfg ? cfg.cls : DEFAULT_EVENT_CLS}`}>
-              {cfg?.label ?? e.event.replace(/_/g, " ")}
-              <span className="font-bold">{e.count}</span>
-            </span>
-          );
-        })}
-      </div>
+    <span className="inline-flex items-center gap-1.5 rounded-md bg-canvas px-2 py-1 text-xs text-ink-2">
+      {label}
+      <span className="font-semibold text-ink tabular-nums">{value}</span>
+    </span>
+  );
+}
+
+function DetailGroup({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <p className="text-xs font-medium text-ink-3 mb-1.5">{title}</p>
+      {children}
     </div>
   );
 }
 
-// ── Weekly Deploy Calendar ────────────────────────────────────────────────────
+function TrafficDetails({ client }: { client: ClientStatus }) {
+  const src = Object.entries(client.ga4_traffic_sources ?? {}).filter(([, v]) => v > 0);
+  const events = (client.ga4_top_events ?? []).filter((e) => !NOISE_EVENTS.has(e.event));
+  const pages = client.ga4_top_pages ?? [];
+
+  const dev = client.ga4_device_breakdown ?? {};
+  const devTotal = (dev.mobile ?? 0) + (dev.tablet ?? 0) + (dev.desktop ?? 0);
+  const mobilePct = devTotal > 0 ? Math.round(((dev.mobile ?? 0) + (dev.tablet ?? 0)) / devTotal * 100) : null;
+  const cr = client.ga4_active_users ? Math.round((client.ga4_conversions / client.ga4_active_users) * 1000) / 10 : null;
+  const nvr = client.ga4_new_vs_returning ?? {};
+  const hasNvr = (nvr.new ?? 0) + (nvr.returning ?? 0) > 0;
+  const hasAudience = mobilePct !== null || cr !== null || hasNvr;
+
+  if (!src.length && !events.length && !pages.length && !hasAudience) return null;
+
+  return (
+    <details className="group -mx-1">
+      <summary className={`flex cursor-pointer list-none items-center gap-1.5 rounded-md px-1 py-1 text-[13px] font-medium text-ink-2 hover:text-ink [&::-webkit-details-marker]:hidden ${FOCUS}`}>
+        <svg className="w-3.5 h-3.5 transition-transform group-open:rotate-90 motion-reduce:transition-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden><polyline points="9 6 15 12 9 18" /></svg>
+        Tráfico en vivo
+      </summary>
+      <div className="mt-3 space-y-3 px-1">
+        {src.length > 0 && (
+          <DetailGroup title="Fuentes">
+            <div className="flex flex-wrap gap-1.5">
+              {src.map(([k, v]) => <Chip key={k} label={SOURCE_LABEL[k] ?? k} value={v} />)}
+            </div>
+          </DetailGroup>
+        )}
+        {events.length > 0 && (
+          <DetailGroup title="Actividad">
+            <div className="flex flex-wrap gap-1.5">
+              {events.map((e) => <Chip key={e.event} label={EVENT_LABEL[e.event] ?? e.event.replace(/_/g, " ")} value={e.count} />)}
+            </div>
+          </DetailGroup>
+        )}
+        {hasAudience && (
+          <DetailGroup title="Audiencia">
+            <div className="flex flex-wrap gap-1.5">
+              {mobilePct !== null && <Chip label="Mobile" value={`${mobilePct}%`} />}
+              {mobilePct !== null && <Chip label="Desktop" value={`${100 - mobilePct}%`} />}
+              {cr !== null && <Chip label="Conversión" value={`${cr}%`} />}
+              {hasNvr && <Chip label="Nuevos" value={nvr.new ?? 0} />}
+              {hasNvr && <Chip label="Recurrentes" value={nvr.returning ?? 0} />}
+            </div>
+          </DetailGroup>
+        )}
+        {pages.length > 0 && (
+          <DetailGroup title="Páginas con más usuarios ahora">
+            <ul className="space-y-1">
+              {pages.map((p) => (
+                <li key={p.path} className="flex items-baseline justify-between gap-3 text-xs">
+                  <span className="font-mono text-ink-2 truncate">{p.path}</span>
+                  <span className="font-semibold text-ink tabular-nums shrink-0">{p.users}</span>
+                </li>
+              ))}
+            </ul>
+          </DetailGroup>
+        )}
+      </div>
+    </details>
+  );
+}
+
+// ── Verdict header: answers the page's one question ───────────────────────────
+
+function Verdict({ clients, eco }: {
+  clients: ClientStatus[];
+  eco: { total: number; peak: number; mobilePct: number; cr: number };
+}) {
+  const total = clients.length;
+  const canNow = clients.filter((c) => c.can_deploy_now).length;
+  const counts = ORDER.map((s) => [s, clients.filter((c) => c.deploy_status === s).length] as const);
+
+  const headline =
+    canNow === total ? "Se puede deployar ahora en todos los clientes."
+    : canNow === 0 ? "Ahora no se puede deployar en ningún cliente."
+    : <>Se puede deployar ahora en <span className="tabular-nums">{canNow}</span> de <span className="tabular-nums">{total}</span> clientes.</>;
+
+  const hasEco = eco.total > 0 || eco.peak > 0;
+
+  return (
+    <section aria-labelledby="verdict" className="space-y-5">
+      <div>
+        <h2 id="verdict" className="text-[28px] sm:text-[36px] font-bold leading-[1.15] tracking-tight text-ink max-w-3xl">
+          {headline}
+        </h2>
+        <ul className="mt-3 flex flex-wrap gap-x-5 gap-y-2">
+          {counts.filter(([, c]) => c > 0).map(([s, c]) => (
+            <li key={s}>
+              <a href={`#${STATUS[s].id}`} className={`inline-flex items-center gap-2 rounded-md text-[15px] font-medium text-ink-2 hover:text-ink ${FOCUS}`}>
+                <span className={`inline-flex w-5 h-5 items-center justify-center rounded-full ${STATUS[s].fill}`}>
+                  <StatusGlyph status={s} className="w-3 h-3" />
+                </span>
+                <span className="tabular-nums">{c}</span> {c === 1 ? STATUS[s].label.toLowerCase() : STATUS[s].group.toLowerCase()}
+              </a>
+            </li>
+          ))}
+        </ul>
+      </div>
+
+      {hasEco && (
+        <div className="rounded-2xl border border-line bg-card px-5 py-4">
+          <p className="flex items-center gap-2 text-[13px] font-medium text-ink-3">
+            <span className="relative flex h-2 w-2" aria-hidden>
+              <span className="absolute inline-flex h-full w-full rounded-full bg-ink-3 opacity-60 motion-safe:animate-ping" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-ink-3" />
+            </span>
+            Ecosistema Avenida+ · {total} clientes
+          </p>
+          <dl className="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-x-6 gap-y-3">
+            <Stat label="Usuarios en vivo" value={n(eco.total)} />
+            <Stat label="Pico de hoy" value={n(eco.peak)} />
+            {eco.mobilePct > 0 && <Stat label="Mobile" value={`${eco.mobilePct}%`} />}
+            {eco.cr > 0 && <Stat label="Conversión" value={`${eco.cr}%`} />}
+          </dl>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <dt className="text-[13px] text-ink-3">{label}</dt>
+      <dd className="text-[22px] font-semibold text-ink tabular-nums leading-tight">{value}</dd>
+    </div>
+  );
+}
+
+// ── Weekly deploy intentions ──────────────────────────────────────────────────
 
 const DAY_NAMES = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
 
 function WeeklyCalendar({ teams }: { teams: PublicTeam[] }) {
   const today = new Date();
   const dow = today.getDay(); // 0=Sun
-  const offsetToMonday = dow === 0 ? -6 : 1 - dow;
   const monday = new Date(today);
-  monday.setDate(today.getDate() + offsetToMonday);
+  monday.setDate(today.getDate() + (dow === 0 ? -6 : 1 - dow));
 
   const days = Array.from({ length: 7 }, (_, i) => {
     const d = new Date(monday);
@@ -310,107 +368,163 @@ function WeeklyCalendar({ teams }: { teams: PublicTeam[] }) {
     return d;
   });
 
-  const hasAnyTeam = teams.some(t => t.deploy_days.length > 0);
+  const hasAnyTeam = teams.some((t) => t.deploy_days.length > 0);
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-3">
-        <svg className="w-5 h-5 text-gray-400 dark:text-gray-500 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-          <rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
-        </svg>
-        <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wide">Intenciones de deploy — semana actual</h3>
-      </div>
+    <section aria-labelledby="week" className="rounded-2xl border border-line bg-card p-5 sm:p-6 space-y-4">
+      <h2 id="week" className="text-[17px] font-semibold text-ink">Equipos que deployan esta semana</h2>
 
-      <div className="grid grid-cols-7 gap-2">
+      <ol className="grid grid-cols-1 sm:grid-cols-7 gap-2">
         {days.map((day, i) => {
           const isToday = day.toDateString() === today.toDateString();
-          const isPast = day < today && !isToday;
-          const deployingTeams = teams.filter(t => t.deploy_days.includes(i));
-          const isWeekend = i >= 5;
+          const deploying = teams.filter((t) => t.deploy_days.includes(i));
 
           return (
-            <div
+            <li
               key={i}
-              className={`relative rounded-xl p-2 flex flex-col gap-1.5 min-h-[90px] border transition-colors
-                ${isToday
-                  ? "bg-accent/10 dark:bg-accent/15 border-accent/40 dark:border-accent/50 ring-2 ring-accent/30"
-                  : isPast
-                    ? "bg-gray-50 dark:bg-navy-900/50 border-gray-100 dark:border-navy-700/50 opacity-60"
-                    : isWeekend
-                      ? "bg-gray-50 dark:bg-navy-900 border-gray-100 dark:border-navy-700"
-                      : "bg-white dark:bg-navy-800 border-gray-200 dark:border-navy-700 shadow-sm dark:shadow-none"
-                }`}
+              aria-current={isToday ? "date" : undefined}
+              className={`flex sm:flex-col items-center sm:items-stretch gap-3 sm:gap-2 rounded-xl border p-3 sm:min-h-[96px]
+                ${isToday ? "border-ink ring-1 ring-ink" : "border-line"}`}
             >
-              {/* Day label */}
-              <div className={`text-center ${isToday ? "text-accent" : isWeekend ? "text-gray-400 dark:text-gray-600" : "text-gray-500 dark:text-gray-400"}`}>
-                <p className="text-xs font-semibold uppercase">{DAY_NAMES[i]}</p>
-                <p className={`text-lg font-black leading-none mt-0.5 ${isToday ? "text-accent" : "text-gray-900 dark:text-white"}`}>
-                  {day.getDate()}
+              <div className="w-16 sm:w-auto shrink-0 sm:text-center">
+                <p className={`text-xs font-medium ${isToday ? "text-ink" : "text-ink-3"}`}>
+                  {DAY_NAMES[i]}{isToday && " · Hoy"}
                 </p>
-                {isToday && (
-                  <span className="inline-block mt-1 text-[9px] font-bold uppercase tracking-wider text-accent leading-none">hoy</span>
-                )}
+                <p className="text-[17px] font-semibold text-ink tabular-nums leading-tight">{day.getDate()}</p>
               </div>
-
-              {/* Team badges */}
-              <div className="flex flex-col gap-1 mt-auto">
-                {deployingTeams.length === 0 ? (
-                  !isWeekend && (
-                    <span className="text-[10px] text-gray-300 dark:text-gray-600 text-center leading-tight">—</span>
-                  )
-                ) : (
-                  deployingTeams.map(t => (
-                    <span key={t.id} className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-indigo-100 dark:bg-indigo-900/40 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-700/50 truncate text-center leading-tight">
-                      {t.name}
-                    </span>
-                  ))
-                )}
+              <div className="flex flex-wrap sm:flex-col gap-1 sm:mt-auto min-w-0">
+                {deploying.length === 0 ? (
+                  <span className="text-xs text-ink-3 sm:text-center">
+                    <span aria-hidden>—</span><span className="sr-only">Sin deploys</span>
+                  </span>
+                ) : deploying.map((t) => (
+                  <span key={t.id} className="rounded-md bg-canvas px-1.5 py-0.5 text-xs font-medium text-ink-2 truncate sm:text-center">
+                    {t.name}
+                  </span>
+                ))}
               </div>
-            </div>
+            </li>
           );
         })}
-      </div>
+      </ol>
 
       {!hasAnyTeam && (
-        <p className="text-center text-xs text-gray-400 dark:text-gray-600 italic">
-          Ningún equipo tiene días de deploy configurados aún — configuralo en Admin → Equipos
+        <p className="text-[13px] text-ink-3">
+          Ningún equipo tiene días de deploy configurados. Se configuran en Admin → Equipos.
         </p>
       )}
+    </section>
+  );
+}
+
+// ── How it works (disclosed on demand) ────────────────────────────────────────
+
+const STEPS = [
+  { title: "Comercial carga la promo", desc: "Las fechas de campañas, descuentos o eventos que van a generar tráfico alto." },
+  { title: "El sistema evalúa el día", desc: "Analiza qué promociones están activas hoy y qué tan críticas son." },
+  { title: "Se define el estado", desc: "Según las reglas, cada cliente queda libre, con aviso o bloqueado." },
+  { title: "Desarrollo decide", desc: "Antes de cada deploy, el equipo revisa esta página para avanzar, avisar o esperar." },
+];
+
+const OUTCOMES: { status: Status; title: string; bullets: string[] }[] = [
+  { status: "LIBRE", title: "Sin promociones activas", bullets: ["Podés deployar en cualquier momento.", "No hace falta avisar a nadie."] },
+  { status: "RESTRINGIDO", title: "Hay una promo de baja criticidad", bullets: ["Avisá a comercial antes de deployar.", "Respetá la ventana horaria si la hay.", "Un incidente en producción afecta la campaña."] },
+  { status: "BLOQUEADO", title: "Promo crítica o tráfico sobre el umbral", bullets: ["Un deploy puede interrumpir comunicaciones o pagos.", "Esperá a que termine la promoción.", "Ante una urgencia, coordiná con comercial y legales."] },
+];
+
+function HowItWorks() {
+  return (
+    <details className="group rounded-2xl border border-line bg-card">
+      <summary className={`flex cursor-pointer list-none items-center justify-between gap-3 rounded-2xl p-5 sm:p-6 text-[17px] font-semibold text-ink [&::-webkit-details-marker]:hidden ${FOCUS}`}>
+        ¿Cómo funciona el semáforo?
+        <svg className="w-4 h-4 text-ink-3 transition-transform group-open:rotate-180 motion-reduce:transition-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden><polyline points="6 9 12 15 18 9" /></svg>
+      </summary>
+      <div className="px-5 sm:px-6 pb-6 space-y-8">
+        <ol className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+          {STEPS.map((step, i) => (
+            <li key={step.title} className="flex gap-3">
+              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-line text-[13px] font-semibold text-ink-2 tabular-nums">{i + 1}</span>
+              <div>
+                <p className="text-[15px] font-semibold text-ink">{step.title}</p>
+                <p className="text-[13px] text-ink-2 mt-0.5 leading-relaxed">{step.desc}</p>
+              </div>
+            </li>
+          ))}
+        </ol>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {OUTCOMES.map((o) => (
+            <div key={o.status} className={`rounded-xl p-5 space-y-3 ${STATUS[o.status].tint}`}>
+              <div className="flex items-center gap-2">
+                <StatusPill status={o.status} />
+              </div>
+              <p className="text-[15px] font-semibold text-ink">{o.title}</p>
+              <ul className="space-y-1.5 list-disc pl-4 text-[14px] text-ink-2">
+                {o.bullets.map((b) => <li key={b}>{b}</li>)}
+              </ul>
+            </div>
+          ))}
+        </div>
+
+        <p className="text-[13px] text-ink-3">
+          La página se actualiza cada minuto. El estado refleja el día de hoy en la zona horaria de cada cliente.
+        </p>
+      </div>
+    </details>
+  );
+}
+
+// ── Loading skeleton ──────────────────────────────────────────────────────────
+
+function Skeleton() {
+  return (
+    <div role="status" className="space-y-8">
+      <span className="sr-only">Cargando estado…</span>
+      <div className="h-10 w-2/3 max-w-xl rounded-lg bg-line motion-safe:animate-pulse" />
+      <div className="grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(min(320px,100%),1fr))]">
+        {Array.from({ length: 6 }).map((_, i) => (
+          <div key={i} className="rounded-2xl border border-line bg-card p-5 space-y-4">
+            <div className="flex gap-3"><div className="h-10 w-10 rounded-lg bg-line motion-safe:animate-pulse" /><div className="h-5 flex-1 rounded bg-line motion-safe:animate-pulse" /></div>
+            <div className="h-4 w-4/5 rounded bg-line motion-safe:animate-pulse" />
+            <div className="h-2.5 rounded-full bg-line motion-safe:animate-pulse" />
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
 
-// ── Main page ─────────────────────────────────────────────────────────────────
+// ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function LandingPage() {
-  const { theme, toggle } = useTheme();
   const [clients, setClients] = useState<ClientStatus[]>([]);
-  const [teams, setTeams]     = useState<PublicTeam[]>([]);
+  const [teams, setTeams] = useState<PublicTeam[]>([]);
   const [generatedAt, setGeneratedAt] = useState("");
   const [countdown, setCountdown] = useState(REFRESH_SECS);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
-  const [ecosystemTotal, setEcosystemTotal] = useState(0);
-  const [ecosystemPeak, setEcosystemPeak] = useState(0);
-  const [ecosystemMobilePct, setEcosystemMobilePct] = useState(0);
-  const [ecosystemDesktopPct, setEcosystemDesktopPct] = useState(0);
-  const [ecosystemCR, setEcosystemCR] = useState(0);
+  const [now, setNow] = useState(() => new Date());
+  const [eco, setEco] = useState({ total: 0, peak: 0, mobilePct: 0, cr: 0 });
 
   const fetchStatus = useCallback(async () => {
-    setError(false);
     try {
       const [data, teamData] = await Promise.all([getPublicStatus(), getPublicTeams()]);
       setClients(data.clients);
       setGeneratedAt(data.generated_at);
-      setEcosystemTotal(data.ecosystem_total ?? 0);
-      setEcosystemPeak(data.ecosystem_peak_today ?? 0);
-      setEcosystemMobilePct(data.ecosystem_mobile_pct ?? 0);
-      setEcosystemDesktopPct(data.ecosystem_desktop_pct ?? 0);
-      setEcosystemCR(data.ecosystem_conversion_rate ?? 0);
+      setEco({
+        total: data.ecosystem_total ?? 0,
+        peak: data.ecosystem_peak_today ?? 0,
+        mobilePct: data.ecosystem_mobile_pct ?? 0,
+        cr: data.ecosystem_conversion_rate ?? 0,
+      });
       setTeams(teamData);
+      setError(false);
+    } catch {
+      setError(true);
+    } finally {
+      setLoading(false);
       setCountdown(REFRESH_SECS);
-    } catch { setError(true); }
-    finally { setLoading(false); }
+    }
   }, []);
 
   useEffect(() => {
@@ -420,277 +534,107 @@ export default function LandingPage() {
   }, [fetchStatus]);
 
   useEffect(() => {
-    const id = setInterval(() => setCountdown((c) => (c > 0 ? c - 1 : 0)), 1000);
+    const id = setInterval(() => {
+      setCountdown((c) => (c > 0 ? c - 1 : 0));
+      setNow(new Date());
+    }, 1000);
     return () => clearInterval(id);
   }, []);
 
-  const bloqueado   = clients.filter((c) => c.deploy_status === "BLOQUEADO");
-  const restringido = clients.filter((c) => c.deploy_status === "RESTRINGIDO");
-  const libre       = clients.filter((c) => c.deploy_status === "LIBRE");
+  // "2026-10-14 14:32 UTC" → "14:32 UTC"
+  const updatedAt = generatedAt.split(" ").slice(1).join(" ");
+  const hasData = clients.length > 0;
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-navy-900 flex flex-col">
-      <header className="bg-white dark:bg-navy-800 border-b border-gray-200 dark:border-navy-700 px-6 py-4 flex items-center justify-between shadow-sm dark:shadow-none">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-lg bg-accent/10 dark:bg-accent/20 flex items-center justify-center flex-shrink-0">
-            <svg className="w-5 h-5 text-accent" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M12 2L21 12H17V20H7V12H3Z"/>
+    <div className="min-h-screen bg-canvas text-ink">
+      <header className="border-b border-line bg-card">
+        <div className="mx-auto max-w-screen-2xl px-4 sm:px-6 py-3 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-2.5">
+            <svg className="w-6 h-6 text-accent shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <path d="M12 2L21 12H17V20H7V12H3Z" />
             </svg>
+            <h1 className="text-[17px] font-semibold text-ink">Deploy Status</h1>
           </div>
-          <div>
-            <h1 className="text-gray-900 dark:text-white font-bold text-xl leading-none">Deploy Status</h1>
-            <p className="text-gray-400 text-xs mt-0.5">Estado actual por cliente</p>
-          </div>
-        </div>
-        <div className="flex items-center gap-3">
-          <div className="text-right">
-            {generatedAt && <p className="text-gray-400 text-xs">Actualizado: {generatedAt}</p>}
-            <button onClick={fetchStatus} className="text-xs text-gray-400 hover:text-gray-900 dark:hover:text-white transition mt-1 cursor-pointer">
-              Actualizar en {countdown}s · <span className="underline">ahora</span>
+          <div className="flex items-center gap-3">
+            {updatedAt && (
+              <p className="hidden sm:block text-[13px] text-ink-3 tabular-nums">
+                Actualizado {updatedAt}<span aria-hidden> · próxima en {countdown} s</span>
+              </p>
+            )}
+            <button
+              onClick={fetchStatus}
+              className={`inline-flex h-8 items-center gap-1.5 rounded-lg border border-line px-3 text-[13px] font-medium text-ink-2 hover:bg-canvas hover:text-ink ${FOCUS}`}
+            >
+              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden><polyline points="23 4 23 10 17 10" /><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10" /></svg>
+              Actualizar
             </button>
           </div>
-          <button onClick={toggle} aria-label="Cambiar tema"
-            className="w-9 h-9 flex items-center justify-center rounded-lg transition text-gray-500 hover:bg-gray-100 dark:hover:bg-navy-700 cursor-pointer">
-            {theme === "dark"
-              ? <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
-              : <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
-            }
-          </button>
         </div>
       </header>
 
-      <main className="flex-1 p-6 w-full max-w-screen-2xl mx-auto">
-        {loading && (
-          <div className="flex items-center justify-center h-64">
-            <div className="flex flex-col items-center gap-3">
-              <svg className="w-10 h-10 text-accent animate-pulse" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M12 2L21 12H17V20H7V12H3Z"/>
-              </svg>
-              <p className="text-gray-400 text-sm">Cargando estado…</p>
-            </div>
-          </div>
-        )}
+      <main className="mx-auto max-w-screen-2xl px-4 sm:px-6 py-8 sm:py-10 space-y-10">
+        {loading && <Skeleton />}
 
-        {error && (
-          <div className="flex flex-col items-center justify-center h-64 gap-4">
-            <p className="text-red-500 text-lg">No se pudo conectar con el backend</p>
-            <button onClick={fetchStatus} className="btn-primary cursor-pointer">Reintentar</button>
-          </div>
-        )}
-
-        {!loading && !error && clients.length === 0 && (
-          <div className="flex flex-col items-center justify-center h-64">
-            <p className="text-gray-400">No hay clientes cargados aún</p>
-          </div>
-        )}
-
-        {!loading && !error && clients.length > 0 && (
-          <div className="space-y-8">
-            <EcosystemBox total={ecosystemTotal} peak={ecosystemPeak} clientCount={clients.length} mobilePct={ecosystemMobilePct} desktopPct={ecosystemDesktopPct} conversionRate={ecosystemCR} />
-
-            <div className="flex gap-3 flex-wrap">
-              <Chip count={bloqueado.length}   label="Bloqueados" color="text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/30 border-red-200 dark:border-red-800" />
-              <Chip count={restringido.length} label="Con aviso"  color="text-yellow-600 dark:text-yellow-400 bg-yellow-50 dark:bg-yellow-900/30 border-yellow-200 dark:border-yellow-800" />
-              <Chip count={libre.length}       label="Libres"     color="text-green-700 dark:text-green-400 bg-green-50 dark:bg-green-900/30 border-green-200 dark:border-green-800" />
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-5">
-              {clients.map((c) => <ClientCard key={c.client_id} client={c} />)}
-            </div>
-
-            {/* Weekly deploy calendar */}
-            <div className="bg-white dark:bg-navy-800 rounded-2xl border border-gray-200 dark:border-navy-700 p-6 shadow-sm dark:shadow-none">
-              <WeeklyCalendar teams={teams} />
-            </div>
-
-            {/* Monthly restrictions calendar — for cloud/infra scaling planning */}
-            <div className="bg-white dark:bg-navy-800 rounded-2xl border border-gray-200 dark:border-navy-700 p-6 shadow-sm dark:shadow-none">
-              <PublicMonthCalendar />
-            </div>
-          </div>
-        )}
-
-        {!loading && !error && <HowItWorks />}
-      </main>
-    </div>
-  );
-}
-
-function EcosystemBox({ total, peak, clientCount, mobilePct, desktopPct, conversionRate }: {
-  total: number; peak: number; clientCount: number;
-  mobilePct: number; desktopPct: number; conversionRate: number;
-}) {
-  const hasDevices = mobilePct > 0 || desktopPct > 0;
-  const hasCR = conversionRate > 0;
-
-  return (
-    <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-indigo-600 via-blue-600 to-cyan-600 p-px shadow-xl">
-      <div className="rounded-2xl bg-gray-950/95 dark:bg-navy-900/95 px-6 py-5 sm:px-8 sm:py-6 space-y-5">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-6">
-          <div>
-            <div className="flex items-center gap-2 mb-1">
-              <span className="relative flex h-2.5 w-2.5">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75" />
-                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-cyan-400" />
-              </span>
-              <span className="text-xs font-semibold text-cyan-400 uppercase tracking-widest">En vivo</span>
-            </div>
-            <h2 className="text-white font-black text-xl sm:text-2xl leading-tight">Ecosistema Avenida+</h2>
-            <p className="text-gray-400 text-sm mt-0.5">{clientCount} clientes monitoreados</p>
-          </div>
-          <div className="flex items-stretch gap-4 sm:gap-8">
-            <div className="text-center">
-              <p className="text-gray-400 text-xs uppercase tracking-wide mb-1">Usuarios online ahora</p>
-              <p className="text-white font-black text-4xl sm:text-5xl leading-none tabular-nums">{total.toLocaleString("es-AR")}</p>
-              <p className="text-cyan-400 text-xs mt-1.5 flex items-center justify-center gap-1">
-                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
-                activos
-              </p>
-            </div>
-            <div className="w-px bg-white/10 self-stretch" />
-            <div className="text-center">
-              <p className="text-gray-400 text-xs uppercase tracking-wide mb-1">Pico máximo hoy</p>
-              <p className="text-white font-black text-4xl sm:text-5xl leading-none tabular-nums">{peak.toLocaleString("es-AR")}</p>
-              <p className="text-indigo-300 text-xs mt-1.5 flex items-center justify-center gap-1">
-                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg>
-                usuarios
-              </p>
-            </div>
-          </div>
-        </div>
-        {(hasDevices || hasCR) && (
-          <div className="flex flex-wrap items-center gap-3 pt-3 border-t border-white/10">
-            {hasDevices && (
-              <>
-                <div className="flex items-center gap-2 bg-white/5 rounded-xl px-4 py-2">
-                  <svg className="w-4 h-4 text-blue-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="5" y="2" width="14" height="20" rx="2"/><circle cx="12" cy="17" r="1" fill="currentColor" stroke="none"/></svg>
-                  <span className="text-white font-bold text-sm">{mobilePct}%</span>
-                  <span className="text-gray-400 text-xs">mobile</span>
-                </div>
-                <div className="flex items-center gap-2 bg-white/5 rounded-xl px-4 py-2">
-                  <svg className="w-4 h-4 text-indigo-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="4" width="20" height="14" rx="2"/><path d="M8 22h8M12 18v4"/></svg>
-                  <span className="text-white font-bold text-sm">{desktopPct}%</span>
-                  <span className="text-gray-400 text-xs">desktop</span>
-                </div>
-              </>
-            )}
-            {hasCR && (
-              <div className="flex items-center gap-2 bg-white/5 rounded-xl px-4 py-2">
-                <svg className="w-4 h-4 text-green-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg>
-                <span className="text-white font-bold text-sm">{conversionRate}%</span>
-                <span className="text-gray-400 text-xs">conv. rate</span>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ── How it works ──────────────────────────────────────────────────────────────
-
-const STEPS = [
-  { title: "Se registra una promoción", desc: "El equipo comercial carga al calendario las fechas de campañas, descuentos o eventos que van a generar tráfico alto.", icon: <svg className="w-7 h-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="8" y1="14" x2="8.01" y2="14" strokeWidth="2.5"/><line x1="12" y1="14" x2="12.01" y2="14" strokeWidth="2.5"/><line x1="8" y1="18" x2="8.01" y2="18" strokeWidth="2.5"/></svg> },
-  { title: "El sistema evalúa el día", desc: "Automáticamente se analiza si hoy hay alguna promoción activa y qué tan crítica es para los usuarios.", icon: <svg className="w-7 h-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17" strokeWidth="2.5"/></svg> },
-  { title: "Se determina el semáforo", desc: "En base a las reglas del negocio, el día queda marcado como libre, con aviso o bloqueado para cada cliente.", icon: <svg className="w-7 h-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="7" y="2" width="10" height="20" rx="2"/><circle cx="12" cy="7" r="1.5" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/><circle cx="12" cy="17" r="1.5" fill="currentColor" stroke="none"/></svg> },
-  { title: "El equipo actúa en consecuencia", desc: "Desarrollo revisa este panel antes de cada deploy para saber si puede avanzar, avisar o esperar.", icon: <svg className="w-7 h-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg> },
-];
-
-const OUTCOMES = [
-  {
-    status: "LIBRE", label: "Podés deployar",
-    bg: "bg-green-50 dark:bg-green-900/10", border: "border-green-200 dark:border-green-800",
-    badge: "bg-green-500", badgeText: "text-green-700 dark:text-green-300",
-    title: "Sin restricciones",
-    icon: <svg className="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>,
-    bullets: ["No hay promociones activas hoy", "Podés hacer el deploy en cualquier momento", "No hace falta avisar a nadie"],
-  },
-  {
-    status: "CON AVISO", label: "Deploy posible, pero avisá",
-    bg: "bg-yellow-50 dark:bg-yellow-900/10", border: "border-yellow-200 dark:border-yellow-700",
-    badge: "bg-yellow-400", badgeText: "text-yellow-700 dark:text-yellow-300",
-    title: "Hay una promo activa",
-    icon: <svg className="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>,
-    bullets: ["Existe una campaña en curso de baja criticidad", "Avisá al equipo comercial antes de deployar", "Respetá la ventana horaria indicada si la hay", "Cualquier incidente en prod afecta la campaña"],
-  },
-  {
-    status: "BLOQUEADO", label: "No deployar",
-    bg: "bg-red-50 dark:bg-red-900/10", border: "border-red-200 dark:border-red-800",
-    badge: "bg-red-500", badgeText: "text-red-700 dark:text-red-300",
-    title: "Promo crítica en curso",
-    icon: <svg className="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>,
-    bullets: ["Hay una campaña de alto impacto activa", "Un deploy podría interrumpir comunicaciones o pagos", "Esperá a que finalice la promoción", "Ante urgencia crítica, coordinar con comercial y legales"],
-  },
-];
-
-function HowItWorks() {
-  return (
-    <section className="mt-16 pb-12 space-y-12">
-      <div className="flex items-center gap-4">
-        <div className="flex-1 h-px bg-gray-200 dark:bg-navy-700" />
-        <span className="text-gray-400 dark:text-gray-500 text-sm font-medium whitespace-nowrap">¿Cómo funciona el semáforo?</span>
-        <div className="flex-1 h-px bg-gray-200 dark:bg-navy-700" />
-      </div>
-
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-0">
-        {STEPS.map((step, i) => (
-          <div key={i} className="relative flex lg:flex-col items-start lg:items-center gap-4 lg:gap-3 lg:text-center px-6 py-5">
-            {i < STEPS.length - 1 && (
-              <div className="hidden lg:block absolute top-8 left-[calc(50%+2rem)] right-0 h-px border-t-2 border-dashed border-gray-200 dark:border-navy-700 z-0" />
-            )}
-            <div className="relative z-10 w-16 h-16 rounded-2xl bg-white dark:bg-navy-800 border-2 border-gray-200 dark:border-navy-700 flex items-center justify-center flex-shrink-0 shadow-sm text-gray-500 dark:text-gray-400">
-              {step.icon}
-              <span className="absolute -top-2 -left-2 w-6 h-6 rounded-full bg-gray-800 dark:bg-gray-200 text-white dark:text-gray-900 text-xs font-black flex items-center justify-center">{i + 1}</span>
-            </div>
+        {!loading && error && !hasData && (
+          <div className="rounded-2xl border border-line bg-card p-8 text-center space-y-4">
             <div>
-              <p className="font-bold text-gray-900 dark:text-white text-sm">{step.title}</p>
-              <p className="text-gray-500 dark:text-gray-400 text-xs mt-1 leading-relaxed">{step.desc}</p>
+              <p className="text-[17px] font-semibold text-ink">No se pudo cargar el estado de deploy</p>
+              <p className="text-[15px] text-ink-2 mt-1">Revisá la conexión y volvé a intentar.</p>
             </div>
+            <button onClick={fetchStatus} className={`inline-flex h-10 items-center rounded-lg bg-ink px-5 text-[15px] font-semibold text-card hover:opacity-90 ${FOCUS}`}>
+              Reintentar
+            </button>
           </div>
-        ))}
-      </div>
+        )}
 
-      <div className="flex items-center gap-4">
-        <div className="flex-1 h-px bg-gray-200 dark:bg-navy-700" />
-        <span className="text-gray-400 dark:text-gray-500 text-sm font-medium whitespace-nowrap">¿Qué significa cada estado?</span>
-        <div className="flex-1 h-px bg-gray-200 dark:bg-navy-700" />
-      </div>
+        {!loading && error && hasData && (
+          <p role="status" className="rounded-xl border border-line bg-card px-4 py-3 text-[13px] text-ink-2">
+            No se pudo actualizar. Se muestran los datos de las {updatedAt || "última carga"}.
+          </p>
+        )}
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-        {OUTCOMES.map((o) => (
-          <div key={o.status} className={`${o.bg} border-2 ${o.border} rounded-2xl p-6 space-y-4`}>
-            <div className="flex items-center gap-3">
-              <div className={`w-11 h-11 rounded-xl ${o.badge} flex items-center justify-center flex-shrink-0`}>{o.icon}</div>
-              <div>
-                <p className={`font-black text-sm uppercase tracking-wide ${o.badgeText}`}>{o.status}</p>
-                <p className="text-gray-700 dark:text-gray-300 font-semibold text-sm">{o.title}</p>
-              </div>
-            </div>
-            <ul className="space-y-2">
-              {o.bullets.map((b, i) => (
-                <li key={i} className="flex items-start gap-2 text-sm text-gray-600 dark:text-gray-400">
-                  <span className="mt-0.5 text-xs shrink-0">•</span>
-                  <span>{b}</span>
-                </li>
-              ))}
-            </ul>
+        {!loading && !error && !hasData && (
+          <div className="rounded-2xl border border-line bg-card p-8 text-center space-y-2">
+            <p className="text-[17px] font-semibold text-ink">Todavía no hay clientes cargados</p>
+            <p className="text-[15px] text-ink-2">
+              Los clientes se crean en <Link href="/admin" className={`underline underline-offset-2 hover:text-ink rounded ${FOCUS}`}>Admin → Clientes</Link>.
+            </p>
           </div>
-        ))}
-      </div>
+        )}
 
-      <p className="text-center text-xs text-gray-400 dark:text-gray-600">
-        Este semáforo se actualiza automáticamente cada minuto · El estado refleja el día de hoy en el timezone de cada cliente
-      </p>
-    </section>
-  );
-}
+        {!loading && hasData && (
+          <>
+            <Verdict clients={clients} eco={eco} />
 
-function Chip({ count, label, color }: { count: number; label: string; color: string }) {
-  return (
-    <div className={`flex items-center gap-2 border rounded-full px-4 py-1.5 ${color}`}>
-      <span className="text-xl font-black tabular-nums">{count}</span>
-      <span className="text-sm font-medium">{label}</span>
+            {ORDER.map((s) => {
+              const group = clients.filter((c) => c.deploy_status === s);
+              if (group.length === 0) return null;
+              return (
+                <section key={s} id={STATUS[s].id} aria-labelledby={`${STATUS[s].id}-h`} className="space-y-4 scroll-mt-6">
+                  <h2 id={`${STATUS[s].id}-h`} className="flex items-center gap-2 text-[17px] font-semibold text-ink">
+                    <span className={`inline-flex w-5 h-5 items-center justify-center rounded-full ${STATUS[s].fill}`}>
+                      <StatusGlyph status={s} className="w-3 h-3" />
+                    </span>
+                    {STATUS[s].group}
+                    <span className="font-normal text-ink-3 tabular-nums">{group.length}</span>
+                  </h2>
+                  <div className="grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(min(320px,100%),1fr))]">
+                    {group.map((c) => <ClientCard key={c.client_id} client={c} now={now} />)}
+                  </div>
+                </section>
+              );
+            })}
+
+            <WeeklyCalendar teams={teams} />
+
+            <section className="rounded-2xl border border-line bg-card p-5 sm:p-6">
+              <PublicMonthCalendar />
+            </section>
+          </>
+        )}
+
+        {!loading && <HowItWorks />}
+      </main>
     </div>
   );
 }
