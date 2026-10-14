@@ -288,11 +288,21 @@ function DetailGroup({ title, children }: { title: string; children: React.React
   );
 }
 
+// Country.iso_code is alpha-3; GA4 countryId is alpha-2
+const ISO2: Record<string, string> = {
+  ARG: "AR", MEX: "MX", COL: "CO", CHL: "CL", PER: "PE", URY: "UY", PRY: "PY",
+  BOL: "BO", ECU: "EC", BRA: "BR", VEN: "VE", USA: "US", ESP: "ES", PAN: "PA",
+};
+
 function TrafficDetails({ client }: { client: ClientStatus }) {
   const src = Object.entries(client.ga4_traffic_sources ?? {}).filter(([, v]) => v > 0);
   const events = (client.ga4_top_events ?? []).filter((e) => !NOISE_EVENTS.has(e.event));
   const pages = client.ga4_top_pages ?? [];
-  const locations = (client.ga4_top_locations ?? []).slice(0, 6);
+  // Top 6, plus every foreign row: the bot alert counts them, so they must be visible here
+  const home = ISO2[client.country_iso?.toUpperCase()] ?? client.country_iso?.toUpperCase();
+  const allLocations = client.ga4_top_locations ?? [];
+  const isForeign = (l: { country_id: string }) => !!home && l.country_id !== home && l.country_id !== "(NOT SET)";
+  const locations = allLocations.filter((l, i) => i < 6 || isForeign(l));
 
   const dev = client.ga4_device_breakdown ?? {};
   const devTotal = (dev.mobile ?? 0) + (dev.tablet ?? 0) + (dev.desktop ?? 0);
@@ -342,7 +352,7 @@ function TrafficDetails({ client }: { client: ClientStatus }) {
           <DetailGroup title="Ubicaciones">
             <div className="flex flex-wrap gap-1.5">
               {locations.map((l) => (
-                <Chip key={`${l.country_id}-${l.city}`} label={`${l.city === "(not set)" ? "Sin ciudad" : l.city} · ${l.country_id}`} value={l.users} />
+                <Chip key={`${l.country_id}-${l.city}`} label={`${l.city === "(not set)" ? "Sin ciudad" : l.city} · ${l.country_id === "(NOT SET)" ? "Sin país" : l.country_id}`} value={l.users} />
               ))}
             </div>
           </DetailGroup>

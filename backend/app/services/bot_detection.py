@@ -24,7 +24,7 @@ DATACENTER_CITIES = {
 _ALPHA3_TO_ALPHA2 = {
     "ARG": "AR", "MEX": "MX", "COL": "CO", "CHL": "CL", "PER": "PE",
     "URY": "UY", "PRY": "PY", "BOL": "BO", "ECU": "EC", "BRA": "BR",
-    "VEN": "VE", "USA": "US", "ESP": "ES",
+    "VEN": "VE", "USA": "US", "ESP": "ES", "PAN": "PA",
 }
 
 
@@ -33,6 +33,10 @@ def _alpha2(iso: str | None) -> str | None:
         return None
     iso = iso.upper()
     return iso if len(iso) == 2 else _ALPHA3_TO_ALPHA2.get(iso)
+
+
+def _known_country(country_id: str | None) -> bool:
+    return bool(country_id) and country_id.upper() not in ("(NOT SET)", "ZZ")
 
 
 def _cloudflare_signal(cf: dict | None) -> tuple[int, list[str]]:
@@ -60,19 +64,22 @@ def assess_bot_suspicion(data: dict | None, home_country_iso: str | None, cf: di
     if users < MIN_USERS:
         return _result(score, reasons)
 
-    # 1. Traffic from outside the client's country
-    locations = data.get("top_locations") or []
+    # 1. Traffic from outside the client's country. GA4 reports "(not set)" when
+    # it can't geolocate a user: that is unknown, not foreign, so it is left out.
+    locations = [l for l in data.get("top_locations") or [] if _known_country(l["country_id"])]
     home = _alpha2(home_country_iso)
     loc_total = sum(l["users"] for l in locations)
     if home and loc_total:
-        foreign = sum(l["users"] for l in locations if l["country_id"] and l["country_id"] != home)
-        share = foreign / loc_total
-        if share >= 0.4:
-            score += 2
-            reasons.append(f"{round(share * 100)}% del tráfico es de fuera del país")
-        elif share >= 0.2:
-            score += 1
-            reasons.append(f"{round(share * 100)}% del tráfico es de fuera del país")
+        by_country: dict[str, int] = {}
+        for l in locations:
+            if l["country_id"] != home:
+                by_country[l["country_id"]] = by_country.get(l["country_id"], 0) + l["users"]
+        share = sum(by_country.values()) / loc_total
+        if share >= 0.2:
+            score += 2 if share >= 0.4 else 1
+            top = sorted(by_country.items(), key=lambda kv: -kv[1])[:3]
+            where = ", ".join(f"{c} {u}" for c, u in top)
+            reasons.append(f"{round(share * 100)}% del tráfico es de fuera del país ({where})")
 
     # 2. Concentration in cloud datacenter cities
     if loc_total:

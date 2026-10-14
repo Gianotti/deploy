@@ -114,3 +114,18 @@ def test_search_engines_do_not_count_as_suspicious():
 def test_low_cloudflare_volume_is_ignored():
     r = assess_bot_suspicion(None, "ARG", cf_traffic(100, [("script", 90)]))
     assert r["level"] == "none"
+
+
+def test_unknown_country_is_not_counted_as_foreign():
+    data = human_traffic(500)
+    data["top_locations"] = [
+        {"country_id": "AR", "city": "Buenos Aires", "users": 250},
+        {"country_id": "(NOT SET)", "city": "(not set)", "users": 250},
+    ]
+    r = assess_bot_suspicion(data, "ARG")
+    assert not any("fuera del país" in reason for reason in r["reasons"])
+
+
+def test_foreign_reason_names_the_countries():
+    r = assess_bot_suspicion(datacenter_bot_traffic(), "ARG")
+    assert any("fuera del país (US" in reason for reason in r["reasons"])
