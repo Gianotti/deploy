@@ -79,3 +79,38 @@ def test_unknown_country_skips_foreign_signal():
 def test_missing_optional_data_does_not_crash():
     r = assess_bot_suspicion({"active_users": 800}, "ARG")
     assert r["level"] == "none"
+
+
+def cf_traffic(requests: int, bots: list[tuple[str, int]]) -> dict:
+    return {
+        "requests": requests,
+        "bot_requests": sum(n for _, n in bots),
+        "top_ips": [
+            {"ip": f"1.1.1.{i}", "country": "US", "asn": None, "requests": n, "kind": kind, "label": kind}
+            for i, (kind, n) in enumerate(bots)
+        ],
+    }
+
+
+def test_cloudflare_bot_share_adds_score_even_without_ga4():
+    r = assess_bot_suspicion(None, "ARG", cf_traffic(20000, [("ai_crawler", 7000)]))
+    assert r["level"] == "possible"
+    assert any("Cloudflare" in reason for reason in r["reasons"])
+
+
+def test_cloudflare_combines_with_ga4_signals():
+    data = human_traffic(400)
+    data["top_events"] = [{"event": "page_view", "count": 400}]
+    data["device_breakdown"] = {"mobile": 40, "tablet": 0, "desktop": 360}
+    r = assess_bot_suspicion(data, "ARG", cf_traffic(20000, [("datacenter", 7000)]))
+    assert r["level"] == "likely"
+
+
+def test_search_engines_do_not_count_as_suspicious():
+    r = assess_bot_suspicion(None, "ARG", cf_traffic(20000, [("search", 9000)]))
+    assert r["level"] == "none"
+
+
+def test_low_cloudflare_volume_is_ignored():
+    r = assess_bot_suspicion(None, "ARG", cf_traffic(100, [("script", 90)]))
+    assert r["level"] == "none"

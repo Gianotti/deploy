@@ -83,7 +83,7 @@ export async function createClient(data: { name: string; country_id: number }): 
   return (await api.post<Client>("/clients/", data)).data;
 }
 
-export async function updateClient(id: number, data: Partial<{ name: string; country_id: number; user_threshold: number | null }>): Promise<Client> {
+export async function updateClient(id: number, data: Partial<{ name: string; country_id: number; user_threshold: number | null; site_host: string | null }>): Promise<Client> {
   return (await api.patch<Client>(`/clients/${id}`, data)).data;
 }
 
@@ -179,6 +179,39 @@ export interface ClientStatus {
   ga4_new_vs_returning: Record<string, number>;
   ga4_top_locations?: { country_id: string; city: string; users: number }[];
   bot_suspicion?: BotSuspicion;
+  cloudflare?: CloudflarePublicSummary | null;
+}
+
+/** /public/status never exposes IPs: bots are grouped by label. IPs live behind auth in /cloudflare/traffic. */
+export interface CloudflarePublicSummary {
+  host: string;
+  window_minutes: number;
+  requests: number;
+  bot_requests: number;
+  bot_share: number;
+  top_bots: { label: string; kind: CloudflareIpKind; requests: number; ips: number }[];
+}
+
+export type CloudflareIpKind = "ai_crawler" | "search" | "script" | "datacenter" | "bot";
+
+export interface CloudflareIp {
+  ip: string;
+  country: string;
+  asn: string | null;
+  requests: number;
+  kind: CloudflareIpKind;
+  label: string;
+}
+
+export interface CloudflareTraffic {
+  zone: string;
+  host: string;
+  window_minutes: number;
+  requests: number;
+  bot_requests: number;
+  bot_share: number;
+  has_asn: boolean;
+  top_ips: CloudflareIp[];
 }
 
 export interface BotSuspicion {
@@ -380,4 +413,37 @@ export async function deleteTeamSlot(teamId: number, slotId: number): Promise<Te
 
 export async function testTeamNotify(teamId: number, slotId: number): Promise<{ sent: boolean; channels: number }> {
   return (await api.post(`/teams/${teamId}/slots/${slotId}/test-notify`)).data;
+}
+
+// ── Cloudflare ────────────────────────────────────────────────────────────────
+
+export interface CloudflareCredentialsStatus {
+  configured: boolean;
+  account_id?: string;
+}
+
+export interface CloudflareZone {
+  id: string;
+  name: string;
+  plan: string;
+}
+
+export async function getCloudflareStatus(): Promise<CloudflareCredentialsStatus> {
+  return (await api.get<CloudflareCredentialsStatus>("/cloudflare/credentials/status")).data;
+}
+
+export async function saveCloudflareCredentials(account_id: string, api_token: string): Promise<void> {
+  await api.post("/cloudflare/credentials", { account_id, api_token });
+}
+
+export async function deleteCloudflareCredentials(): Promise<void> {
+  await api.delete("/cloudflare/credentials");
+}
+
+export async function getCloudflareZones(): Promise<CloudflareZone[]> {
+  return (await api.get<CloudflareZone[]>("/cloudflare/zones")).data;
+}
+
+export async function getCloudflareTraffic(clientId: number): Promise<CloudflareTraffic> {
+  return (await api.get<CloudflareTraffic>(`/cloudflare/traffic/${clientId}`)).data;
 }

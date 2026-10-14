@@ -18,6 +18,7 @@ from app.models.repository import Repository
 from app.rules.engine import _active_promotions_on_date, can_deploy_now, compute_day_status
 from app.services import tracker
 from app.services.bot_detection import assess_bot_suspicion
+from app.services import cloudflare_service
 
 router = APIRouter(prefix="/public", tags=["public"])
 
@@ -186,6 +187,7 @@ class ClientStatusOut(BaseModel):
     ga4_top_events: list[dict] = []
     ga4_new_vs_returning: dict[str, int] = {}
     ga4_top_locations: list[dict] = []
+    cloudflare: dict | None = None
     bot_suspicion: dict = {"level": "none", "score": 0, "reasons": []}
 
 
@@ -224,12 +226,30 @@ def _fetch_all_ga4(db: Session, clients: list) -> dict[int, dict]:
     return result
 
 
+def _fetch_all_cloudflare(db: Session, clients: list) -> dict[int, dict]:
+    from app.api.endpoints.cloudflare import get_cf_creds
+    creds = get_cf_creds(db)
+    targets = [c for c in clients if c.site_host]
+    if not creds or not targets:
+        return {}
+
+    def fetch(c):
+        try:
+            return c.id, cloudflare_service.get_bot_traffic(creds["account_id"], creds["api_token"], c.site_host)
+        except Exception:
+            return c.id, None
+
+    with ThreadPoolExecutor(max_workers=min(len(targets), 8)) as pool:
+        return {cid: data for cid, data in pool.map(fetch, targets) if data is not None}
+
+
 @router.get("/status", response_model=PublicStatusOut)
 def public_status(db: Session = Depends(get_db)):
     rules = db.query(DeployRule).all()
     clients = db.query(Client).all()
     active_by_client = tracker.all_active()
     ga4_by_client = _fetch_all_ga4(db, clients)
+    cf_by_client = _fetch_all_cloudflare(db, clients)
 
     results: List[ClientStatusOut] = []
 
@@ -254,6 +274,7 @@ def public_status(db: Session = Depends(get_db)):
         can_now = can_deploy_now(status, ws, we, country.timezone)
 
         ga4_data = ga4_by_client.get(client.id)
+        cf_data = cf_by_client.get(client.id)
         # GA4 preferred; fallback to in-memory GTM tracker
         users = ga4_data["active_users"] if ga4_data else active_by_client.get(client.id)
 
@@ -290,7 +311,8 @@ def public_status(db: Session = Depends(get_db)):
                 ga4_top_events=ga4_data.get("top_events", []) if ga4_data else [],
                 ga4_new_vs_returning=ga4_data.get("new_vs_returning", {}) if ga4_data else {},
                 ga4_top_locations=ga4_data.get("top_locations", []) if ga4_data else [],
-                bot_suspicion=assess_bot_suspicion(ga4_data, country.iso_code) if ga4_data else {"level": "none", "score": 0, "reasons": []},
+                cloudflare=cloudflare_service.public_summary(cf_data),
+                bot_suspicion=assess_bot_suspicion(ga4_data, country.iso_code, cf_data),
             )
         )
 

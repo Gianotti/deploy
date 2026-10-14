@@ -219,11 +219,41 @@ function BotAlert({ client }: { client: ClientStatus }) {
       <ul className="mt-1.5 space-y-0.5 pl-6 text-[13px] text-ink-2 list-disc">
         {bot.reasons.map((r) => <li key={r}>{r}</li>)}
       </ul>
+      <div className="pl-6"><CloudflareBots client={client} limit={4} /></div>
       {client.traffic_blocked && (
         <p className="mt-2 pl-6 text-[13px] text-ink-2">
           El bloqueo por umbral puede deberse a bots. Revisalo antes de esperar.
         </p>
       )}
+    </div>
+  );
+}
+
+// ── Cloudflare: which bots hit the site, grouped by name (no IPs on this public page) ─
+
+const CF_KIND_LABEL: Record<string, string> = {
+  ai_crawler: "Crawler IA", search: "Buscador", script: "Script", datacenter: "Datacenter", bot: "Bot",
+};
+
+function CloudflareBots({ client, limit, includeSearch = false }: { client: ClientStatus; limit: number; includeSearch?: boolean }) {
+  const cf = client.cloudflare;
+  const bots = (cf?.top_bots ?? []).filter((b) => includeSearch || b.kind !== "search").slice(0, limit);
+  if (!cf || !bots.length) return null;
+
+  return (
+    <div className="mt-2.5">
+      <p className="text-xs font-medium text-ink-3 mb-1">Bots en Cloudflare · últimos {cf.window_minutes} min</p>
+      <ul className="space-y-1">
+        {bots.map((b) => (
+          <li key={b.label} className="flex items-baseline justify-between gap-3 text-xs">
+            <span className="min-w-0">
+              <span className="text-ink">{b.label}</span>
+              <span className="text-ink-3"> · {CF_KIND_LABEL[b.kind] ?? b.kind} · {b.ips} {b.ips === 1 ? "IP" : "IPs"}</span>
+            </span>
+            <span className="shrink-0 font-semibold text-ink tabular-nums">{n(b.requests)} req</span>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
@@ -272,7 +302,9 @@ function TrafficDetails({ client }: { client: ClientStatus }) {
   const hasNvr = (nvr.new ?? 0) + (nvr.returning ?? 0) > 0;
   const hasAudience = mobilePct !== null || cr !== null || hasNvr;
 
-  if (!src.length && !events.length && !pages.length && !locations.length && !hasAudience) return null;
+  const cf = client.cloudflare;
+
+  if (!src.length && !events.length && !pages.length && !locations.length && !hasAudience && !cf) return null;
 
   return (
     <details className="group -mx-1">
@@ -313,6 +345,16 @@ function TrafficDetails({ client }: { client: ClientStatus }) {
                 <Chip key={`${l.country_id}-${l.city}`} label={`${l.city === "(not set)" ? "Sin ciudad" : l.city} · ${l.country_id}`} value={l.users} />
               ))}
             </div>
+          </DetailGroup>
+        )}
+        {cf && (
+          <DetailGroup title={`Cloudflare · ${cf.host}`}>
+            <div className="flex flex-wrap gap-1.5">
+              <Chip label={`Requests ${cf.window_minutes} min`} value={n(cf.requests)} />
+              <Chip label="Bots identificados" value={`${Math.round(cf.bot_share * 100)}%`} />
+            </div>
+            {/* The bot alert above already lists them */}
+            {client.bot_suspicion?.level === "none" && <CloudflareBots client={client} limit={8} includeSearch />}
           </DetailGroup>
         )}
         {pages.length > 0 && (

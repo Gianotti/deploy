@@ -8,6 +8,7 @@ from app.api.deps import get_current_user, require_admin
 from app.db.base import get_db
 from app.models.client import Client
 from app.schemas.client import ClientCreate, ClientOut, ClientUpdate
+from app.services.cloudflare_service import normalize_host
 
 router = APIRouter(prefix="/clients", tags=["clients"])
 
@@ -36,7 +37,7 @@ def get_client(client_id: int, db: Session = Depends(get_db), _=Depends(get_curr
 
 @router.post("/", response_model=ClientOut, dependencies=[Depends(require_admin)])
 def create_client(payload: ClientCreate, db: Session = Depends(get_db)):
-    client = Client(**payload.model_dump())
+    client = Client(**{**payload.model_dump(), "site_host": normalize_host(payload.site_host)})
     db.add(client)
     try:
         db.commit()
@@ -52,7 +53,12 @@ def update_client(client_id: int, payload: ClientUpdate, db: Session = Depends(g
     c = db.get(Client, client_id)
     if not c:
         raise HTTPException(404, "Client not found")
-    for field, value in payload.model_dump(exclude_none=True).items():
+    # exclude_unset (not exclude_none) so optional fields can be cleared by sending null
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        if value is None and field in ("name", "country_id"):
+            continue
+        if field == "site_host":
+            value = normalize_host(value)
         setattr(c, field, value)
     db.commit()
     db.refresh(c)

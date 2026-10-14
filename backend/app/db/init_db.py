@@ -44,6 +44,8 @@ def _patch_missing_columns() -> None:
             ("ga4_property_id", "ALTER TABLE clients ADD COLUMN ga4_property_id VARCHAR"),
             ("logo_data",       "ALTER TABLE clients ADD COLUMN logo_data BYTEA"),
             ("logo_filename",   "ALTER TABLE clients ADD COLUMN logo_filename VARCHAR"),
+            ("user_threshold",  "ALTER TABLE clients ADD COLUMN user_threshold INTEGER"),
+            ("site_host",       "ALTER TABLE clients ADD COLUMN site_host VARCHAR"),
         ]:
             if col not in clients_cols:
                 conn.execute(text(ddl))

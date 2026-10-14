@@ -10,15 +10,17 @@ import {
   getDeployRules, createDeployRule, deleteDeployRule,
   getNotificationConfig, saveNotificationConfig, sendNotificationNow,
   getGA4CredentialsStatus, saveGA4Credentials, deleteGA4Credentials, getGA4Realtime,
+  getCloudflareStatus, saveCloudflareCredentials, deleteCloudflareCredentials, getCloudflareZones, getCloudflareTraffic,
   getRepositories, createRepository, deleteRepository, addClientToRepository, removeClientFromRepository,
   getTeams, createTeam, updateTeam, deleteTeam, addTeamChannel, removeTeamChannel,
   addTeamSlot, updateTeamSlot, deleteTeamSlot, testTeamNotify,
   extractError,
   type NotificationConfig, type GA4RealtimeData, type GA4CredentialsStatus,
+  type CloudflareCredentialsStatus, type CloudflareZone, type CloudflareTraffic,
 } from "@/lib/api";
 import type { Country, Client, DeployRule, PromoType, DeployStatus, Repository, Team } from "@/types";
 
-type Tab = "countries" | "clients" | "rules" | "notifications" | "ga4" | "repositories" | "teams";
+type Tab = "countries" | "clients" | "rules" | "notifications" | "ga4" | "cloudflare" | "repositories" | "teams";
 
 const PROMO_TYPES: PromoType[] = ["PROMO_ESPECIAL", "PROMO_NORMAL"];
 const DEPLOY_STATUSES: DeployStatus[] = ["LIBRE", "RESTRINGIDO", "BLOQUEADO"];
@@ -766,6 +768,217 @@ function GA4Tab() {
   );
 }
 
+// ─── Cloudflare ──────────────────────────────────────────────────────────────
+
+const CF_KIND_LABEL: Record<string, string> = {
+  ai_crawler: "Crawler IA", search: "Buscador", script: "Script", datacenter: "Datacenter", bot: "Bot",
+};
+
+function slug(s: string) {
+  return s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+// Suggest a zone from the client name: "Catálogo - Tienda Macro" or "Macro" → tiendamacro.com.ar.
+// Only an unambiguous match is suggested; the admin still has to confirm it.
+function suggestZone(clientName: string, zones: CloudflareZone[]): string | null {
+  const name = slug(clientName);
+  const hits = zones.filter(z => {
+    const label = slug(z.name.split(".")[0]);
+    return label === name || label === `tienda${name}` || (label.length >= 5 && name.includes(label));
+  });
+  const names = Array.from(new Set(hits.map(z => z.name.split(".")[0])));
+  if (names.length !== 1) return null;
+  // Same label on several TLDs (tiendabrubank.com / .com.ar): prefer the country one
+  return (hits.find(z => z.name.endsWith(".ar")) ?? hits[0]).name;
+}
+
+function CloudflareTab() {
+  const [status, setStatus] = useState<CloudflareCredentialsStatus | null>(null);
+  const [form, setForm] = useState({ account_id: "", api_token: "" });
+  const [zones, setZones] = useState<CloudflareZone[]>([]);
+  const [clients, setClients] = useState<Client[]>([]);
+  const [hosts, setHosts] = useState<Record<number, string>>({});
+  const [saving, setSaving] = useState<number | "creds" | null>(null);
+  const [traffic, setTraffic] = useState<Record<number, CloudflareTraffic | string>>({});
+  const [error, setError] = useState("");
+  const [msg, setMsg] = useState("");
+
+  function loadClients() {
+    getClients().then(cs => {
+      setClients(cs);
+      const map: Record<number, string> = {};
+      cs.forEach(c => { map[c.id] = c.site_host ?? ""; });
+      setHosts(map);
+    });
+  }
+
+  useEffect(() => {
+    getCloudflareStatus().then(s => {
+      setStatus(s);
+      if (s.configured) getCloudflareZones().then(setZones).catch(err => setError(extractError(err)));
+    }).catch(() => setStatus({ configured: false }));
+    loadClients();
+  }, []);
+
+  function flash(text: string) { setMsg(text); setTimeout(() => setMsg(""), 3000); }
+
+  async function handleSaveCreds(e: React.FormEvent) {
+    e.preventDefault(); setError(""); setSaving("creds");
+    try {
+      await saveCloudflareCredentials(form.account_id, form.api_token);
+      const s = await getCloudflareStatus();
+      setStatus(s); setForm({ account_id: "", api_token: "" });
+      setZones(await getCloudflareZones());
+      flash("Credenciales guardadas ✅");
+    } catch (err: any) { setError(extractError(err)); }
+    finally { setSaving(null); }
+  }
+
+  async function handleDeleteCreds() {
+    if (!confirm("¿Eliminar las credenciales de Cloudflare?")) return;
+    await deleteCloudflareCredentials();
+    setStatus({ configured: false }); setZones([]); setTraffic({});
+  }
+
+  async function handleSaveHost(clientId: number, value?: string) {
+    setSaving(clientId); setError("");
+    try {
+      const host = (value ?? hosts[clientId] ?? "").trim() || null;
+      const updated = await updateClient(clientId, { site_host: host });
+      setHosts(h => ({ ...h, [clientId]: updated.site_host ?? "" }));
+      setClients(cs => cs.map(c => c.id === clientId ? updated : c));
+      flash("Dominio actualizado ✅");
+    } catch (err: any) { setError(extractError(err)); }
+    finally { setSaving(null); }
+  }
+
+  async function handleTest(clientId: number) {
+    setTraffic(t => ({ ...t, [clientId]: "loading" }));
+    try {
+      const data = await getCloudflareTraffic(clientId);
+      setTraffic(t => ({ ...t, [clientId]: data }));
+    } catch (err: any) { setTraffic(t => ({ ...t, [clientId]: extractError(err) })); }
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="card p-6 space-y-4">
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <h2 className="font-semibold text-gray-900 dark:text-white">Credenciales Cloudflare</h2>
+          {status?.configured && (
+            <span className="text-xs bg-green-50 dark:bg-green-900/30 text-green-600 dark:text-green-400 border border-green-200 dark:border-green-800 px-2.5 py-1 rounded-full">
+              ✅ Configurado — cuenta {status.account_id?.slice(0, 8)}… · {zones.length} zonas
+            </span>
+          )}
+        </div>
+
+        {!status?.configured ? (
+          <form onSubmit={handleSaveCreds} className="space-y-3">
+            <div className="bg-blue-50 dark:bg-navy-700/50 border border-blue-200 dark:border-navy-700 rounded-xl p-3 text-xs text-blue-700 dark:text-gray-400 space-y-1">
+              <p>1. Cloudflare → Manage Account → Account API Tokens → Create Token</p>
+              <p>2. Permisos de solo lectura: <strong>Account Analytics: Read</strong> y <strong>Zone: Read</strong> (+ Analytics: Read) sobre las zonas de las tiendas</p>
+              <p>3. El Account ID está en la URL del dashboard o en la home de la cuenta</p>
+            </div>
+            <div>
+              <label className="field-label">Account ID</label>
+              <input className="field font-mono text-xs" placeholder="5e72741c…" required
+                value={form.account_id} onChange={e => setForm({ ...form, account_id: e.target.value })} />
+            </div>
+            <div>
+              <label className="field-label">API Token</label>
+              <input className="field font-mono text-xs" type="password" placeholder="cfat_…" required autoComplete="off"
+                value={form.api_token} onChange={e => setForm({ ...form, api_token: e.target.value })} />
+            </div>
+            {error && <p className="text-red-500 text-sm">{error}</p>}
+            {msg && <p className="text-green-500 text-sm">{msg}</p>}
+            <button type="submit" disabled={saving === "creds"} className="btn-primary">
+              {saving === "creds" ? "Verificando..." : "Verificar y guardar"}
+            </button>
+          </form>
+        ) : (
+          <button onClick={handleDeleteCreds}
+            className="px-5 py-2.5 rounded-xl border border-red-200 dark:border-red-800 text-sm font-semibold text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 transition">
+            Eliminar credenciales
+          </button>
+        )}
+      </div>
+
+      <div className="card p-6 space-y-4">
+        <h2 className="font-semibold text-gray-900 dark:text-white">Dominio por cliente</h2>
+        <p className="text-sm text-gray-500 dark:text-gray-400">
+          El dominio de la tienda (ej. <span className="font-mono bg-gray-100 dark:bg-navy-700 px-1 rounded">tiendamacro.com.ar</span>).
+          Si es el dominio de la zona se mira toda la zona; si es un subdominio, solo ese host. Las IPs se ven solo acá: la landing pública muestra los bots agrupados, sin IPs.
+        </p>
+        {status?.configured && error && <p className="text-red-500 text-sm">{error}</p>}
+        {status?.configured && msg && <p className="text-green-500 text-sm">{msg}</p>}
+        <datalist id="cf-zones">{zones.map(z => <option key={z.id} value={z.name}>{z.plan}</option>)}</datalist>
+        <div className="space-y-3">
+          {clients.map(c => {
+            const suggestion = !c.site_host ? suggestZone(c.name, zones) : null;
+            const t = traffic[c.id];
+            return (
+              <div key={c.id} className="space-y-2">
+                <div className="flex items-center gap-3 flex-wrap">
+                  <div className="w-40 flex-shrink-0">
+                    <p className="text-gray-900 dark:text-white font-medium text-sm truncate">{c.name}</p>
+                    <p className="text-gray-400 text-xs">{c.country.name}</p>
+                  </div>
+                  <input className="field flex-1 min-w-0 font-mono text-sm" list="cf-zones" placeholder="dominio.com.ar"
+                    value={hosts[c.id] ?? ""} onChange={e => setHosts({ ...hosts, [c.id]: e.target.value })} />
+                  <button onClick={() => handleSaveHost(c.id)} disabled={saving === c.id}
+                    className="btn-primary flex-shrink-0 text-xs py-2 px-3">
+                    {saving === c.id ? "..." : "Guardar"}
+                  </button>
+                  {status?.configured && c.site_host && (
+                    <button onClick={() => handleTest(c.id)} disabled={t === "loading"}
+                      className="flex-shrink-0 text-xs py-2 px-3 rounded-xl border border-gray-200 dark:border-navy-700 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-navy-700 transition">
+                      {t === "loading" ? "Consultando..." : "Ver bots"}
+                    </button>
+                  )}
+                </div>
+                {suggestion && (
+                  <p className="ml-44 text-xs text-gray-500 dark:text-gray-400">
+                    Sugerido: <span className="font-mono">{suggestion}</span>{" "}
+                    <button onClick={() => handleSaveHost(c.id, suggestion)} className="text-accent font-semibold hover:underline">Usar</button>
+                  </p>
+                )}
+                {typeof t === "string" && t !== "loading" && (
+                  <p className="ml-44 text-xs text-red-500">{t}</p>
+                )}
+                {t && typeof t === "object" && (
+                  <div className="ml-44 bg-gray-50 dark:bg-navy-700/50 border border-gray-200 dark:border-navy-700 rounded-xl px-4 py-3 space-y-2">
+                    <p className="text-sm text-gray-700 dark:text-gray-300">
+                      <strong>{t.requests.toLocaleString("es-AR")}</strong> requests en {t.window_minutes} min ·{" "}
+                      <strong>{Math.round(t.bot_share * 100)}%</strong> bots identificados · zona {t.zone}
+                      {!t.has_asn && <span className="text-gray-400"> · plan sin datos de ASN</span>}
+                    </p>
+                    {t.top_ips.length > 0 ? (
+                      <table className="w-full text-xs">
+                        <tbody>
+                          {t.top_ips.map(ip => (
+                            <tr key={ip.ip} className="border-t border-gray-200 dark:border-navy-700">
+                              <td className="py-1 pr-3 font-mono text-gray-900 dark:text-white">{ip.ip}</td>
+                              <td className="py-1 pr-3 text-gray-600 dark:text-gray-300">{ip.label}</td>
+                              <td className="py-1 pr-3 text-gray-400">{CF_KIND_LABEL[ip.kind]} · {ip.country}{ip.asn ? ` · ${ip.asn}` : ""}</td>
+                              <td className="py-1 text-right tabular-nums font-semibold text-gray-900 dark:text-white">{ip.requests.toLocaleString("es-AR")}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    ) : (
+                      <p className="text-xs text-gray-500">No se detectaron bots entre las IPs con más tráfico.</p>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Repositories ─────────────────────────────────────────────────────────────
 
 function RepositoriesTab() {
@@ -1187,6 +1400,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "rules",         label: "⚙️ Reglas" },
   { id: "notifications", label: "💬 Notificaciones" },
   { id: "ga4",           label: "📊 GA4" },
+  { id: "cloudflare",    label: "☁️ Cloudflare" },
   { id: "repositories",  label: "🗂 Repositorios" },
   { id: "teams",         label: "👥 Equipos" },
 ];
@@ -1226,6 +1440,7 @@ export default function AdminPage() {
         {tab === "rules"         && <RulesTab />}
         {tab === "notifications" && <NotificationsTab />}
         {tab === "ga4"           && <GA4Tab />}
+        {tab === "cloudflare"    && <CloudflareTab />}
         {tab === "repositories"  && <RepositoriesTab />}
         {tab === "teams"         && <TeamsTab />}
       </div>

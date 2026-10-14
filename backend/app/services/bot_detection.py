@@ -3,10 +3,13 @@
 GA4 realtime exposes no IP or user agent, so this can only flag traffic that
 *looks* automated. Each signal adds weight; the total maps to a level:
   >= 4 → "likely", >= 2 → "possible", else "none".
+When Cloudflare data is available (see cloudflare_service.get_bot_traffic) the
+share of requests from crawlers/scripts/datacenters is one more signal.
 Pure function, no I/O — see tests/test_bot_detection.py.
 """
 
 MIN_USERS = 30  # below this, ratios are too noisy to mean anything
+CF_MIN_REQUESTS = 500  # same idea for Cloudflare requests in the window
 
 # Cities that host the big cloud regions (AWS, GCP, Azure, Salesforce/Heroku).
 # Real shoppers from a LatAm bank marketplace rarely show up here in bulk.
@@ -32,15 +35,30 @@ def _alpha2(iso: str | None) -> str | None:
     return iso if len(iso) == 2 else _ALPHA3_TO_ALPHA2.get(iso)
 
 
-def assess_bot_suspicion(data: dict, home_country_iso: str | None) -> dict:
-    """Return {"level": "none"|"possible"|"likely", "score": int, "reasons": [str]}."""
-    users = data.get("active_users") or 0
-    result = {"level": "none", "score": 0, "reasons": []}
-    if users < MIN_USERS:
-        return result
+def _cloudflare_signal(cf: dict | None) -> tuple[int, list[str]]:
+    # Search engines (Googlebot, Bingbot) are expected and harmless: not counted.
+    if not cf or cf.get("requests", 0) < CF_MIN_REQUESTS:
+        return 0, []
+    noisy = [ip for ip in cf.get("top_ips", []) if ip["kind"] != "search"]
+    search = sum(ip["requests"] for ip in cf.get("top_ips", []) if ip["kind"] == "search")
+    share = max(cf.get("bot_requests", 0) - search, 0) / cf["requests"]
+    if share < 0.15 or not noisy:
+        return 0, []
+    by_label: dict[str, int] = {}
+    for ip in noisy:
+        by_label[ip["label"]] = by_label.get(ip["label"], 0) + ip["requests"]
+    top = max(by_label, key=by_label.get)
+    reason = f"{round(share * 100)}% de las requests en Cloudflare son bots ({top})"
+    return (2 if share >= 0.3 else 1), [reason]
 
-    score = 0
-    reasons: list[str] = []
+
+def assess_bot_suspicion(data: dict | None, home_country_iso: str | None, cf: dict | None = None) -> dict:
+    """Return {"level": "none"|"possible"|"likely", "score": int, "reasons": [str]}."""
+    score, reasons = _cloudflare_signal(cf)
+    data = data or {}
+    users = data.get("active_users") or 0
+    if users < MIN_USERS:
+        return _result(score, reasons)
 
     # 1. Traffic from outside the client's country
     locations = data.get("top_locations") or []
@@ -92,5 +110,9 @@ def assess_bot_suspicion(data: dict, home_country_iso: str | None) -> dict:
         score += 1
         reasons.append("ninguna conversión con tráfico alto")
 
+    return _result(score, reasons)
+
+
+def _result(score: int, reasons: list[str]) -> dict:
     level = "likely" if score >= 4 else "possible" if score >= 2 else "none"
     return {"level": level, "score": score, "reasons": reasons}

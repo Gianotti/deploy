@@ -55,6 +55,7 @@ export interface Client {
   country: Country;
   ga4_property_id: string | null;
   user_threshold: number | null;
+  site_host?: string | null;
   has_logo?: boolean;
   logo_filename?: string | null;
 }

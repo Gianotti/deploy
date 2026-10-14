@@ -12,6 +12,7 @@ class Client(Base):
     country_id = Column(Integer, ForeignKey("countries.id"), nullable=False)
     ga4_property_id = Column(String, nullable=True)
     user_threshold = Column(Integer, nullable=True)  # block deploy if active users >= this
+    site_host = Column(String, nullable=True)  # e.g. "tiendamacro.com.ar" — matched to a Cloudflare zone
     logo_data = Column(LargeBinary, nullable=True)
     logo_filename = Column(String, nullable=True)
 
