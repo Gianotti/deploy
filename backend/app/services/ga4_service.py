@@ -202,6 +202,26 @@ def get_active_users(credentials_json: str, property_id: str) -> dict:
         except Exception:
             pass
 
+        # Ubicaciones (país + ciudad) — opcional; alimenta la detección de bots
+        top_locations: list[dict] = []
+        try:
+            loc_resp = ga4.run_realtime_report(RunRealtimeReportRequest(
+                property=property_id,
+                dimensions=[Dimension(name="countryId"), Dimension(name="city")],
+                metrics=[Metric(name="activeUsers")],
+                limit=15,
+            ))
+            top_locations = [
+                {
+                    "country_id": row.dimension_values[0].value.upper(),
+                    "city": row.dimension_values[1].value,
+                    "users": int(row.metric_values[0].value),
+                }
+                for row in loc_resp.rows
+            ]
+        except Exception:
+            pass
+
         data = {
             "active_users": total_users,
             "page_views": total_views,
@@ -211,6 +231,7 @@ def get_active_users(credentials_json: str, property_id: str) -> dict:
             "device_breakdown": device_breakdown,
             "top_events": top_events,
             "new_vs_returning": new_vs_returning,
+            "top_locations": top_locations,
         }
         _result_cache[property_id] = (now, data)
         return data

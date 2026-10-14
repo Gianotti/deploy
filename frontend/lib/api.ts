@@ -177,6 +177,14 @@ export interface ClientStatus {
   ga4_conversions: number;
   ga4_top_events: { event: string; count: number }[];
   ga4_new_vs_returning: Record<string, number>;
+  ga4_top_locations?: { country_id: string; city: string; users: number }[];
+  bot_suspicion?: BotSuspicion;
+}
+
+export interface BotSuspicion {
+  level: "none" | "possible" | "likely";
+  score: number;
+  reasons: string[];
 }
 
 export interface PublicStatus {

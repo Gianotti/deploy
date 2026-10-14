@@ -17,6 +17,7 @@ from app.models.promotion import Promotion
 from app.models.repository import Repository
 from app.rules.engine import _active_promotions_on_date, can_deploy_now, compute_day_status
 from app.services import tracker
+from app.services.bot_detection import assess_bot_suspicion
 
 router = APIRouter(prefix="/public", tags=["public"])
 
@@ -184,6 +185,8 @@ class ClientStatusOut(BaseModel):
     ga4_conversions: int = 0
     ga4_top_events: list[dict] = []
     ga4_new_vs_returning: dict[str, int] = {}
+    ga4_top_locations: list[dict] = []
+    bot_suspicion: dict = {"level": "none", "score": 0, "reasons": []}
 
 
 class PublicStatusOut(BaseModel):
@@ -286,6 +289,8 @@ def public_status(db: Session = Depends(get_db)):
                 ga4_conversions=ga4_data.get("conversions", 0) if ga4_data else 0,
                 ga4_top_events=ga4_data.get("top_events", []) if ga4_data else [],
                 ga4_new_vs_returning=ga4_data.get("new_vs_returning", {}) if ga4_data else {},
+                ga4_top_locations=ga4_data.get("top_locations", []) if ga4_data else [],
+                bot_suspicion=assess_bot_suspicion(ga4_data, country.iso_code) if ga4_data else {"level": "none", "score": 0, "reasons": []},
             )
         )
 

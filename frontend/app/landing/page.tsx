@@ -149,7 +149,7 @@ function ClientCard({ client, now }: { client: ClientStatus; now: Date }) {
   const users = client.ga4_active_users;
 
   return (
-    <article className="rounded-2xl border border-line bg-card p-5 flex flex-col gap-4">
+    <article id={`cliente-${client.client_id}`} className="rounded-2xl border border-line bg-card p-5 flex flex-col gap-4 scroll-mt-6">
       <header className="flex items-start justify-between gap-3">
         <div className="flex items-center gap-3 min-w-0">
           {client.has_logo ? (
@@ -186,8 +186,44 @@ function ClientCard({ client, now }: { client: ClientStatus; now: Date }) {
         </span>
       </div>
 
+      <BotAlert client={client} />
+
       <TrafficDetails client={client} />
     </article>
+  );
+}
+
+// ── Suspected bot traffic: heuristics from GA4 realtime (see backend bot_detection.py) ─
+
+function BotIcon({ className = "w-4 h-4" }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <rect x="4" y="8" width="16" height="12" rx="3" /><line x1="12" y1="4" x2="12" y2="8" /><circle cx="12" cy="3" r="1" />
+      <line x1="9" y1="13" x2="9" y2="14" /><line x1="15" y1="13" x2="15" y2="14" /><line x1="2" y1="13" x2="2" y2="16" /><line x1="22" y1="13" x2="22" y2="16" />
+    </svg>
+  );
+}
+
+function BotAlert({ client }: { client: ClientStatus }) {
+  const bot = client.bot_suspicion;
+  if (!bot || bot.level === "none") return null;
+  const likely = bot.level === "likely";
+
+  return (
+    <div role="note" className="rounded-xl border border-dashed border-aviso bg-aviso-tint px-3.5 py-3">
+      <p className="flex items-center gap-2 text-[14px] font-semibold text-aviso">
+        <BotIcon />
+        {likely ? "Probable tráfico de bots" : "Posible tráfico de bots"}
+      </p>
+      <ul className="mt-1.5 space-y-0.5 pl-6 text-[13px] text-ink-2 list-disc">
+        {bot.reasons.map((r) => <li key={r}>{r}</li>)}
+      </ul>
+      {client.traffic_blocked && (
+        <p className="mt-2 pl-6 text-[13px] text-ink-2">
+          El bloqueo por umbral puede deberse a bots. Revisalo antes de esperar.
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -225,6 +261,7 @@ function TrafficDetails({ client }: { client: ClientStatus }) {
   const src = Object.entries(client.ga4_traffic_sources ?? {}).filter(([, v]) => v > 0);
   const events = (client.ga4_top_events ?? []).filter((e) => !NOISE_EVENTS.has(e.event));
   const pages = client.ga4_top_pages ?? [];
+  const locations = (client.ga4_top_locations ?? []).slice(0, 6);
 
   const dev = client.ga4_device_breakdown ?? {};
   const devTotal = (dev.mobile ?? 0) + (dev.tablet ?? 0) + (dev.desktop ?? 0);
@@ -234,7 +271,7 @@ function TrafficDetails({ client }: { client: ClientStatus }) {
   const hasNvr = (nvr.new ?? 0) + (nvr.returning ?? 0) > 0;
   const hasAudience = mobilePct !== null || cr !== null || hasNvr;
 
-  if (!src.length && !events.length && !pages.length && !hasAudience) return null;
+  if (!src.length && !events.length && !pages.length && !locations.length && !hasAudience) return null;
 
   return (
     <details className="group -mx-1">
@@ -265,6 +302,15 @@ function TrafficDetails({ client }: { client: ClientStatus }) {
               {cr !== null && <Chip label="Conversión" value={`${cr}%`} />}
               {hasNvr && <Chip label="Nuevos" value={nvr.new ?? 0} />}
               {hasNvr && <Chip label="Recurrentes" value={nvr.returning ?? 0} />}
+            </div>
+          </DetailGroup>
+        )}
+        {locations.length > 0 && (
+          <DetailGroup title="Ubicaciones">
+            <div className="flex flex-wrap gap-1.5">
+              {locations.map((l) => (
+                <Chip key={`${l.country_id}-${l.city}`} label={`${l.city === "(not set)" ? "Sin ciudad" : l.city} · ${l.country_id}`} value={l.users} />
+              ))}
             </div>
           </DetailGroup>
         )}
@@ -301,6 +347,7 @@ function Verdict({ clients, eco }: {
     : <>Se puede deployar ahora en <span className="tabular-nums">{canNow}</span> de <span className="tabular-nums">{total}</span> clientes.</>;
 
   const hasEco = eco.total > 0 || eco.peak > 0;
+  const suspicious = clients.filter((c) => c.bot_suspicion && c.bot_suspicion.level !== "none");
 
   return (
     <section aria-labelledby="verdict" className="space-y-5">
@@ -320,6 +367,17 @@ function Verdict({ clients, eco }: {
             </li>
           ))}
         </ul>
+        {suspicious.length > 0 && (
+          <p className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-[15px] text-ink-2">
+            <span className="inline-flex items-center gap-1.5 font-medium text-aviso"><BotIcon />Tráfico sospechoso de bots en</span>
+            {suspicious.map((c, i) => (
+              <span key={c.client_id}>
+                <a href={`#cliente-${c.client_id}`} className={`font-medium text-ink underline underline-offset-2 rounded ${FOCUS}`}>{c.client_name}</a>
+                {i < suspicious.length - 1 && ","}
+              </span>
+            ))}
+          </p>
+        )}
       </div>
 
       {hasEco && (
