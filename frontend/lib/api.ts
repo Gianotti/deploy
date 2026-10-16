@@ -182,14 +182,41 @@ export interface ClientStatus {
   cloudflare?: CloudflarePublicSummary | null;
 }
 
-/** /public/status never exposes IPs: bots are grouped by label. IPs live behind auth in /cloudflare/traffic. */
+export interface CloudflarePath { path: string; requests: number }
+
+export interface CloudflareFirewall {
+  events: number;
+  by_action: Record<string, number>;
+  /** Only IPs identified as bots; blocks on real people stay aggregated in by_action */
+  top_ips: { ip: string; country: string; kind: CloudflareIpKind; label: string; action: string; rule: string; requests: number }[];
+  blocked_search: { label: string; requests: number }[];
+}
+
+/** Bots grouped by label. Only IPs classified as bots reach here, never residential ones. */
 export interface CloudflarePublicSummary {
   host: string;
   window_minutes: number;
   requests: number;
   bot_requests: number;
   bot_share: number;
-  top_bots: { label: string; kind: CloudflareIpKind; requests: number; ips: number }[];
+  top_bots: {
+    label: string;
+    kind: CloudflareIpKind;
+    requests: number;
+    ips: number;
+    paths?: CloudflarePath[];
+    ip_list?: { ip: string; country: string; asn: string | null; requests: number; paths?: CloudflarePath[] }[];
+  }[];
+  health?: {
+    status: { "2xx": number; "3xx": number; "4xx": number; "5xx": number };
+    error_rate: number;
+    cached_share: number;
+    origin_ms: number | null;
+  };
+  /** Requests per minute, last hour, oldest first */
+  series?: { t: string; requests: number }[];
+  /** null when the zone's plan has no firewall analytics (Free) */
+  firewall?: CloudflareFirewall | null;
 }
 
 export type CloudflareIpKind = "ai_crawler" | "search" | "script" | "datacenter" | "bot";

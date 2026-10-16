@@ -907,7 +907,7 @@ function CloudflareTab() {
         <h2 className="font-semibold text-gray-900 dark:text-white">Dominio por cliente</h2>
         <p className="text-sm text-gray-500 dark:text-gray-400">
           El dominio de la tienda (ej. <span className="font-mono bg-gray-100 dark:bg-navy-700 px-1 rounded">tiendamacro.com.ar</span>).
-          Si es el dominio de la zona se mira toda la zona; si es un subdominio, solo ese host. Las IPs se ven solo acá: la landing pública muestra los bots agrupados, sin IPs.
+          Si es el dominio de la zona se mira toda la zona; si es un subdominio, solo ese host. La landing muestra las IPs de los bots detectados; las IPs de usuarios reales no se muestran nunca.
         </p>
         {status?.configured && error && <p className="text-red-500 text-sm">{error}</p>}
         {status?.configured && msg && <p className="text-green-500 text-sm">{msg}</p>}
