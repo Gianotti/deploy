@@ -28,6 +28,12 @@
   --bloq-fill:   200 38 26;   /* #C8261A */
   --on-bloq:     255 255 255; /* 5.6:1 on fill */
   --bloq-tint:   253 236 235; /* #FDECEB, bloq text 5.8:1 */
+
+  /* /executive charts & deltas (validated with the dataviz checks).
+     Kept apart from libre/aviso/bloq, which only mean deploy status. */
+  --series:  42 120 214;   /* #2A78D6 */
+  --up:      0 99 0;       /* #006300 */
+  --down:    208 59 59;    /* #D03B3B 4.7:1 */
 }
 
 .dark {
@@ -52,6 +58,10 @@
   --bloq-fill:   248 113 113;
   --on-bloq:     14 18 25;    /* 6.8:1 on fill */
   --bloq-tint:   46 23 25;    /* #2E1719 */
+
+  --series:  57 135 229;   /* #3987E5 */
+  --up:      12 163 12;    /* #0CA30C */
+  --down:    230 103 103;  /* #E66767 */
 }
 
 body {

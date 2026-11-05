@@ -474,3 +474,80 @@ export async function getCloudflareZones(): Promise<CloudflareZone[]> {
 export async function getCloudflareTraffic(clientId: number): Promise<CloudflareTraffic> {
   return (await api.get<CloudflareTraffic>(`/cloudflare/traffic/${clientId}`)).data;
 }
+
+// Executive (CMO view) — auth required
+export interface ExecPair { cur: number; prev: number }
+export interface ExecPairN { cur: number | null; prev: number | null }
+
+export interface ExecDay { date: string; sessions: number; conversions: number; purchases: number; revenue: number }
+
+export interface ExecKpis {
+  conversion_key: "purchases" | "conversions";
+  has_revenue: boolean;
+  sessions: ExecPair;
+  conversions: ExecPair;
+  revenue: ExecPair | null;
+  conversion_rate: ExecPairN;
+  avg_order_value: ExecPairN | null;
+}
+
+export interface ExecPromo {
+  id: number;
+  description: string | null;
+  promo_type: "PROMO_ESPECIAL" | "PROMO_NORMAL";
+  criticality: number;
+  start_date: string;
+  end_date: string;
+}
+
+export interface ExecLift { during: number; baseline: number; lift: number | null }
+
+export interface ExecPromoResult extends ExecPromo {
+  ongoing: boolean;
+  days_measured: number;
+  baseline_days: number;
+  sessions: ExecLift;
+  conversions: ExecLift;
+  revenue: ExecLift;
+}
+
+export interface ExecBreakdownRow { sessions: number; conversions: number; purchases: number; revenue: number }
+
+export interface ExecClient {
+  client_id: number;
+  client_name: string;
+  country_name: string;
+  country_iso: string;
+  has_logo: boolean;
+  ga4_configured: boolean;
+  currency: string | null;
+  kpis: ExecKpis | null;
+  series: ExecDay[];
+  channels: (ExecBreakdownRow & { channel: string })[];
+  campaigns: (ExecBreakdownRow & { campaign: string; source_medium: string })[];
+  active_promos: ExecPromo[];
+  promo_results: ExecPromoResult[];
+  stale: boolean;
+  error: string | null;
+  data_through?: string;
+}
+
+export interface ExecOverview {
+  generated_at: string;
+  window_days: number;
+  ga4_configured: boolean;
+  ecosystem: {
+    clients_with_data: number;
+    ecommerce_clients: number;
+    sessions: ExecPair;
+    purchases: ExecPair;
+    purchase_rate: ExecPairN;
+    revenue: (ExecPair & { currency: string; clients: number })[];
+  };
+  clients: ExecClient[];
+  upcoming: (ExecPromo & { client_id: number; client_name: string })[];
+}
+
+export async function getExecutiveOverview(): Promise<ExecOverview> {
+  return (await api.get<ExecOverview>("/executive/overview")).data;
+}

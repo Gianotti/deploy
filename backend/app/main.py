@@ -29,6 +29,12 @@ async def lifespan(app: FastAPI):
 
     rebuild_all_team_jobs()
 
+    # Refrescar en segundo plano los reportes GA4 de la vista CMO (/executive)
+    from datetime import datetime as _dt
+    from app.api.endpoints.executive import WARM_EVERY_MIN, warm_cache
+    scheduler.add_job(warm_cache, "interval", minutes=WARM_EVERY_MIN, id="executive_warm",
+                      next_run_time=_dt.utcnow(), replace_existing=True)
+
     # Restaurar el pico de usuarios del día desde la DB
     from app.models.integration_config import IntegrationConfig
     from app.services import tracker

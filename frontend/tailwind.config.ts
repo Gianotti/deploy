@@ -20,6 +20,9 @@ const config: Config = {
           3: "rgb(var(--ink-3) / <alpha-value>)",
         },
         line: "rgb(var(--line) / <alpha-value>)",
+        series: "rgb(var(--series) / <alpha-value>)",
+        up: "rgb(var(--up) / <alpha-value>)",
+        down: "rgb(var(--down) / <alpha-value>)",
         ...Object.fromEntries(
           (["libre", "aviso", "bloq"] as const).map((s) => [s, {
             DEFAULT: `rgb(var(--${s}) / <alpha-value>)`,

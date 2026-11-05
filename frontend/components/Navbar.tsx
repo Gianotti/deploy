@@ -9,6 +9,7 @@ const ALL_LINKS = [
   { href: "/dashboard",  label: "🚦 Inicio",       roles: ["admin", "reader", "comercial"] },
   { href: "/calendar",   label: "📅 Calendario",   roles: ["admin", "reader", "comercial"] },
   { href: "/promotions", label: "🏷️ Promociones",  roles: ["admin", "reader", "comercial"] },
+  { href: "/executive",  label: "📈 Negocio",      roles: ["admin", "reader", "comercial"] },
   { href: "/admin",      label: "⚙️ Admin",         roles: ["admin", "reader"] },
 ] as const;
 
