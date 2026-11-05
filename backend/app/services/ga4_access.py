@@ -4,7 +4,8 @@ Usa la GA4 Admin API (REST, `accessBindings`) con las mismas credenciales guarda
 para la Data API. Requisitos:
   - Service Account: tiene que tener rol Administrador en la property/cuenta de GA4
     (listar accesos es una acción de admin).
-  - OAuth: el refresh token tiene que incluir el scope
+  - OAuth: el refresh token tiene que incluir los scopes
+    https://www.googleapis.com/auth/analytics.readonly y
     https://www.googleapis.com/auth/analytics.manage.users.readonly
 
 La parte pura (merge_access, ROLE_LABELS, to_csv_rows) no hace I/O y está testeada.
@@ -18,7 +19,12 @@ from google.auth.transport.requests import AuthorizedSession
 from google.oauth2 import credentials as oauth2_credentials
 from google.oauth2 import service_account
 
-ADMIN_SCOPES = ["https://www.googleapis.com/auth/analytics.manage.users.readonly"]
+# analytics.readonly: properties.get / accounts.get (nombre y cuenta padre).
+# analytics.manage.users.readonly: accessBindings.list.
+ADMIN_SCOPES = [
+    "https://www.googleapis.com/auth/analytics.readonly",
+    "https://www.googleapis.com/auth/analytics.manage.users.readonly",
+]
 _BASE = "https://analyticsadmin.googleapis.com"
 
 # Rol predefinido → (etiqueta, nivel). Nivel mayor = más permisos.

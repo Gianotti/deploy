@@ -171,16 +171,19 @@ class GA4AccessOut(BaseModel):
     error: str | None = None
 
 
-def _access_error(e: Exception) -> str:
+def _access_error(e: Exception, is_oauth: bool) -> str:
     msg = str(e)
     low = msg.lower()
+    detail = f" (Google: {msg[:160]})"
     if "scope" in low and ("insufficient" in low or "invalid" in low):
-        return ("El token OAuth no tiene el scope analytics.manage.users.readonly — "
-                "regenerá el Refresh Token incluyendo ese scope")
+        if is_oauth:
+            return ("El token OAuth no tiene los scopes necesarios — regenerá el Refresh Token con "
+                    "analytics.readonly y analytics.manage.users.readonly" + detail)
+        return "Faltan scopes en la solicitud a la Admin API" + detail
     if "has not been used" in low or "is disabled" in low:
-        return "La Google Analytics Admin API no está habilitada en el proyecto de Cloud de estas credenciales"
+        return "La Google Analytics Admin API no está habilitada en el proyecto de Cloud de estas credenciales" + detail
     if msg.startswith("403") or "permission" in low:
-        return "Sin permiso para ver accesos — la cuenta/SA necesita rol Administrador en GA4"
+        return "Sin permiso para ver accesos — la cuenta/SA necesita rol Administrador en GA4" + detail
     if msg.startswith("404"):
         return "Property no encontrada — verificá el Property ID"
     return f"Error de API: {msg[:160]}"
@@ -190,12 +193,13 @@ def _client_access(creds: str, client: Client, force: bool) -> GA4AccessOut:
     base = {"client_id": client.id, "client_name": client.name, "property_id": client.ga4_property_id}
     if not client.ga4_property_id:
         return GA4AccessOut(**base, error="Sin GA4 property ID configurado")
+    is_oauth = json.loads(creds).get("type") == "oauth"
     try:
         data = get_property_access(creds, client.ga4_property_id, force=force)
     except Exception as e:
-        return GA4AccessOut(**base, error=_access_error(e))
+        return GA4AccessOut(**base, error=_access_error(e, is_oauth))
     if data.get("account_error"):
-        data = {**data, "account_error": _access_error(RuntimeError(data["account_error"]))}
+        data = {**data, "account_error": _access_error(RuntimeError(data["account_error"]), is_oauth)}
     return GA4AccessOut(client_id=client.id, client_name=client.name, **data)
 
 
