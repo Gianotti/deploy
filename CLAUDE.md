@@ -53,7 +53,7 @@ npm run build    # also the only type check — there is no lint/tsc script
 npm run start
 ```
 
-There is no linter or formatter configured for either backend or frontend. Backend tests cover only the rules engine (`tests/test_engine.py`), which needs no database.
+There is no linter or formatter configured for either backend or frontend. Backend tests cover only pure functions with no DB or network: the rules engine (`test_engine.py`), CMO metrics (`test_executive.py`), GA4 bot heuristics (`test_bot_detection.py`) and Cloudflare IP/UA classification (`test_cloudflare_classify.py`). Keep new logic in these modules I/O-free so it stays testable the same way.
 
 ### Docker (full stack)
 
@@ -93,6 +93,8 @@ GET /public/status         → all clients, no auth required; merges GA4 realtim
 GET /public/calendar       → all clients, no auth required; month grid of merged deploy status, used by /landing
 ```
 
+`GET /public/status` is the heaviest endpoint: per client it fans out GA4 and Cloudflare fetches in parallel thread pools, then attaches `cloudflare` (via `cloudflare_service.public_summary`) and `bot_suspicion` (via `bot_detection.assess_bot_suspicion`) to each client. Both the landing grid and `/landing/[slug]` read only this one endpoint.
+
 **Traffic-threshold override**: `Client.user_threshold` (nullable int) lets a client force `BLOQUEADO` when live traffic spikes, independent of any promotion. In `GET /public/status`, if `user_threshold` is set and current active users (GA4 realtime if configured, else the in-memory tracker) reach or exceed it, the engine's computed status is overridden to `BLOQUEADO` and `can_deploy_now` is forced `False`. This override is UI-facing only (`/landing`, `/public/status`) — it does not touch `compute_windows()`/`compute_day_status()` in the rules engine itself, and is not applied by the authenticated `/deploy-windows` or `/deploy-status/today` endpoints.
 
 ### Scheduler (APScheduler)
@@ -104,6 +106,24 @@ GET /public/calendar       → all clients, no auth required; month grid of merg
 GA4 service account credentials are stored as JSON in the `integration_configs` table under key `ga4_service_account`. Clients can have a `ga4_property_id`; `GET /ga4/realtime` fetches active users for all configured clients in parallel (up to 8 threads). The public status endpoint uses GA4 data when available, with a fallback to the in-memory GTM tracker (`services/tracker.py`) which counts page view events in a 5-minute sliding window. The tracker is fed by `GET /tracking/{client_id}/ping` — a public, CORS-open endpoint returning a 1x1 GIF so it can be fired as a GTM Custom Image tag. Tracker state is per-process memory (lost on restart, not shared across workers).
 
 `IntegrationConfig` doubles as generic key/value storage beyond GA4 creds: `GET /public/status` tracks the day's ecosystem-wide peak concurrent users under key `ecosystem_peak_today` (`{"date": ..., "peak": ...}`), persisted on every new peak so it survives container restarts (`tracker.set_peak_state()` reloads it at startup).
+
+### Executive (CMO) view
+
+`GET /executive/overview` (auth required, because revenue must never reach `/public/*`) builds the whole `/executive` payload. `services/ga4_reports.py` runs a single GA4 Data API batch per property: 70 days of daily sessions/keyEvents/purchases/revenue, plus a 7-day channel breakdown and a 7-day campaign breakdown. It caches the result for 1h and returns stale data on error. The APScheduler job `executive_warm` (every 30 min) keeps that cache warm. All of the math lives in `services/executive.py` and is pure:
+- Windows cover complete days only: the last 7 days vs. the 7 before them.
+- The conversion metric is purchases when the property reports ecommerce, otherwise key events.
+- Revenue is grouped per currency; there is no FX conversion.
+- Promo lift is the average per day during the promo vs. up to 14 earlier days with no promos for that same client.
+
+`backend/scripts/check_ga4_ecommerce.py` is a read-only check of which properties really report ecommerce.
+
+### Cloudflare integration & bot detection
+
+Credentials (`account_id` + `api_token`) live in `IntegrationConfig` under key `cloudflare` (`get_cf_creds()` in `api/endpoints/cloudflare.py`). A client is linked to Cloudflare through `Client.site_host` (stored normalized by `normalize_host()`: no scheme, path, port or `www.`), which is matched to the account's zone that contains it. `cloudflare_service.get_bot_traffic()` queries the GraphQL Analytics API for the last 15 minutes and returns bot/datacenter IPs only (residential IPs are never returned), plus zone `health` and `firewall` events. Data is cached in process memory (zones 1h, traffic 2 min). Zones on the Free plan lack ASN and firewall data; the service records this in `_no_asn_zones`/`_no_fw_zones` and degrades without failing.
+
+`services/bot_detection.py` is a pure scoring heuristic over GA4 realtime data (no IP/UA available there): each signal adds weight, total ≥4 → `likely`, ≥2 → `possible`. Cloudflare's non-search bot share is one extra signal. Below `MIN_USERS`/`CF_MIN_REQUESTS` signals are ignored as noise. GA4 users with unknown country (`(not set)`/`ZZ`) don't count as foreign traffic.
+
+GA4 results are also cached per property in `ga4_service` and stale data is returned on any error (needed to stay within quota). Keep that behavior if you touch the service.
 
 ### Auth
 
@@ -118,8 +138,12 @@ Frontend: JWT stored in a cookie (`access_token`, 1-day expiry) via `js-cookie`.
 | `/dashboard` | Semáforo per-client: "¿puedo deployar ahora?" |
 | `/calendar` | Month grid with color-coded days + detail panel |
 | `/promotions` | List + create form (create/delete for admin + comercial) |
-| `/admin` | Tabbed admin panel: Countries, Clients, Deploy Rules, Notifications (Google Chat), GA4, Repositories, Teams |
-| `/landing` | Public-facing status page (no login required) |
+| `/admin` | Tabbed admin panel: Countries, Clients, Deploy Rules, Notifications (Google Chat), GA4, Cloudflare, Repositories, Teams |
+| `/executive` | CMO view (any logged-in role): 7-day business KPIs, per-client table, promo lift, upcoming promos. `/executive/[slug]` is the per-client detail |
+| `/landing` | Public-facing status page (no login required), auto-refreshing from `/public/status` |
+| `/landing/[slug]` | Per-client public detail page; slug comes from `clientSlug()` in `components/landing/parts.tsx` (accent-stripped kebab name, falling back to the id) |
+
+Shared landing UI lives in `components/landing/parts.tsx`. Light/dark/auto appearance: `lib/theme.tsx` (`ThemeProvider`, mode saved in `localStorage.theme`) plus `THEME_INIT_SCRIPT` from `lib/theme-script.ts`, inlined in `<head>` by `app/layout.tsx` so the page doesn't flash the wrong theme. Styling uses Tailwind's `dark` class on `<html>`.
 
 ### Schema changes / DB init
 
@@ -134,7 +158,7 @@ Country → Client → Promotion
 DeployRule (global, not per-client) × Promotion → DeployWindowDay (computed, never stored)
 Repository ←→ Client (many-to-many via client_repositories)
 Team → TeamChannel (webhook destinations), TeamNotificationSlot (time + message, up to 3)
-IntegrationConfig (key/value store) — holds GA4 service account JSON
+IntegrationConfig (key/value store) — GA4 service account JSON, Cloudflare creds, ecosystem_peak_today
 NotificationConfig (singleton row) — Google Chat webhook + up to 3 daily notification times
 ```
 
