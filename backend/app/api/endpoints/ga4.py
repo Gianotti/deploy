@@ -1,4 +1,5 @@
 import json
+from concurrent.futures import ThreadPoolExecutor
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -8,6 +9,7 @@ from app.api.deps import get_current_user, require_admin
 from app.db.base import get_db
 from app.models.client import Client
 from app.models.integration_config import IntegrationConfig
+from app.services.ga4_access import get_property_access
 from app.services.ga4_service import get_active_users
 
 router = APIRouter(prefix="/ga4", tags=["ga4"])
@@ -144,3 +146,75 @@ def get_realtime_client(client_id: int, db: Session = Depends(get_db), _=Depends
         )
     except Exception as e:
         raise HTTPException(502, _friendly_error(e))
+
+
+# ── Accesos (quién tiene acceso a cada property y con qué rol) ───────────────
+
+class GA4AccessUser(BaseModel):
+    email: str
+    role: str
+    property_roles: list[str] = []
+    account_roles: list[str] = []
+    restrictions: list[str] = []
+    source: str  # property | account | property+account
+
+
+class GA4AccessOut(BaseModel):
+    client_id: int
+    client_name: str
+    property_id: str | None = None
+    property_name: str | None = None
+    account: str | None = None
+    account_name: str | None = None
+    users: list[GA4AccessUser] = []
+    account_error: str | None = None
+    error: str | None = None
+
+
+def _access_error(e: Exception) -> str:
+    msg = str(e)
+    low = msg.lower()
+    if "scope" in low and ("insufficient" in low or "invalid" in low):
+        return ("El token OAuth no tiene el scope analytics.manage.users.readonly — "
+                "regenerá el Refresh Token incluyendo ese scope")
+    if "has not been used" in low or "is disabled" in low:
+        return "La Google Analytics Admin API no está habilitada en el proyecto de Cloud de estas credenciales"
+    if msg.startswith("403") or "permission" in low:
+        return "Sin permiso para ver accesos — la cuenta/SA necesita rol Administrador en GA4"
+    if msg.startswith("404"):
+        return "Property no encontrada — verificá el Property ID"
+    return f"Error de API: {msg[:160]}"
+
+
+def _client_access(creds: str, client: Client, force: bool) -> GA4AccessOut:
+    base = {"client_id": client.id, "client_name": client.name, "property_id": client.ga4_property_id}
+    if not client.ga4_property_id:
+        return GA4AccessOut(**base, error="Sin GA4 property ID configurado")
+    try:
+        data = get_property_access(creds, client.ga4_property_id, force=force)
+    except Exception as e:
+        return GA4AccessOut(**base, error=_access_error(e))
+    if data.get("account_error"):
+        data = {**data, "account_error": _access_error(RuntimeError(data["account_error"]))}
+    return GA4AccessOut(client_id=client.id, client_name=client.name, **data)
+
+
+@router.get("/access", response_model=list[GA4AccessOut], dependencies=[Depends(require_admin)])
+def get_access_all(refresh: bool = False, db: Session = Depends(get_db)):
+    creds = _get_creds(db)
+    if not creds:
+        raise HTTPException(400, "No hay credenciales de GA4 configuradas")
+    clients = db.query(Client).filter(Client.ga4_property_id.isnot(None)).order_by(Client.name).all()
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        return list(pool.map(lambda c: _client_access(creds, c, refresh), clients))
+
+
+@router.get("/access/{client_id}", response_model=GA4AccessOut, dependencies=[Depends(require_admin)])
+def get_access_client(client_id: int, refresh: bool = False, db: Session = Depends(get_db)):
+    creds = _get_creds(db)
+    if not creds:
+        raise HTTPException(400, "No hay credenciales de GA4 configuradas")
+    client = db.get(Client, client_id)
+    if not client:
+        raise HTTPException(404, "Cliente no encontrado")
+    return _client_access(creds, client, refresh)

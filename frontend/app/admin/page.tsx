@@ -10,6 +10,7 @@ import {
   getDeployRules, createDeployRule, deleteDeployRule,
   getNotificationConfig, saveNotificationConfig, sendNotificationNow,
   getGA4CredentialsStatus, saveGA4Credentials, deleteGA4Credentials, getGA4Realtime,
+  getGA4Access, getGA4AccessAll, type GA4Access, type GA4AccessUser,
   getCloudflareStatus, saveCloudflareCredentials, deleteCloudflareCredentials, getCloudflareZones, getCloudflareTraffic,
   getRepositories, createRepository, deleteRepository, addClientToRepository, removeClientFromRepository,
   getTeams, createTeam, updateTeam, deleteTeam, addTeamChannel, removeTeamChannel,
@@ -564,6 +565,136 @@ function NotificationsTab() {
 
 type CredMode = "sa" | "oauth";
 
+const ACCESS_SOURCE_LABEL: Record<GA4AccessUser["source"], string> = {
+  property: "Property", account: "Cuenta (heredado)", "property+account": "Property + Cuenta",
+};
+
+// ";" + BOM: Excel en español abre el archivo con columnas y acentos bien.
+function downloadAccessCsv(list: GA4Access[], filename: string) {
+  const esc = (v: string | null | undefined) => `"${(v ?? "").replace(/"/g, '""')}"`;
+  const header = ["Cliente", "Property ID", "Property", "Cuenta", "Email", "Rol efectivo",
+    "Rol en property", "Rol en cuenta", "Origen", "Restricciones", "Error"];
+  const rows: string[][] = [];
+  for (const a of list) {
+    const base = [a.client_name, a.property_id ?? "", a.property_name ?? "", a.account_name ?? a.account ?? ""];
+    if (a.error || a.users.length === 0) {
+      rows.push([...base, "", "", "", "", "", "", a.error ?? "Sin usuarios"]);
+      continue;
+    }
+    for (const u of a.users) {
+      rows.push([...base, u.email, u.role, u.property_roles.join(", "), u.account_roles.join(", "),
+        ACCESS_SOURCE_LABEL[u.source], u.restrictions.join(", "), a.account_error ?? ""]);
+    }
+  }
+  const csv = "﻿" + [header, ...rows].map(r => r.map(esc).join(";")).join("\r\n");
+  const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+  const link = document.createElement("a");
+  link.href = url; link.download = filename; link.click();
+  URL.revokeObjectURL(url);
+}
+
+function accessFilename(name: string) {
+  const day = new Date().toISOString().slice(0, 10);
+  return `ga4-usuarios-${slug(name) || "clientes"}-${day}.csv`;
+}
+
+function GA4AccessModal({ client, onClose }: { client: Client; onClose: () => void }) {
+  const [data, setData] = useState<GA4Access | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  async function load(refresh = false) {
+    setLoading(true); setError("");
+    try { setData(await getGA4Access(client.id, refresh)); }
+    catch (err: any) { setError(extractError(err)); }
+    finally { setLoading(false); }
+  }
+
+  useEffect(() => { load(); }, [client.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const err = error || data?.error;
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="card w-full max-w-3xl max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
+        <div className="p-5 border-b border-gray-100 dark:border-navy-700 flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h3 className="font-semibold text-gray-900 dark:text-white">👥 Usuarios con acceso — {client.name}</h3>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1 truncate">
+              {data?.property_name ? `${data.property_name} · ` : ""}<span className="font-mono">{data?.property_id ?? client.ga4_property_id}</span>
+              {data?.account_name ? ` · Cuenta: ${data.account_name}` : ""}
+            </p>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-700 dark:hover:text-white text-xl leading-none" aria-label="Cerrar">×</button>
+        </div>
+
+        <div className="p-5 overflow-y-auto flex-1 space-y-3">
+          {loading && <p className="text-sm text-gray-500 dark:text-gray-400">Cargando accesos...</p>}
+          {!loading && err && (
+            <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl px-4 py-3 text-sm text-red-600 dark:text-red-400">❌ {err}</div>
+          )}
+          {!loading && !err && data?.account_error && (
+            <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-xl px-4 py-3 text-xs text-yellow-700 dark:text-yellow-400">
+              ⚠️ No se pudieron leer los accesos heredados de la cuenta: {data.account_error}. Se muestran solo los de la property.
+            </div>
+          )}
+          {!loading && !err && data && data.users.length === 0 && (
+            <p className="text-sm text-gray-500 dark:text-gray-400">La property no tiene usuarios con acceso directo.</p>
+          )}
+          {!loading && !err && data && data.users.length > 0 && (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-xs text-gray-500 dark:text-gray-400 border-b border-gray-100 dark:border-navy-700">
+                    <th className="py-2 pr-3 font-medium">Email</th>
+                    <th className="py-2 pr-3 font-medium">Rol</th>
+                    <th className="py-2 pr-3 font-medium">Origen</th>
+                    <th className="py-2 font-medium">Restricciones</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.users.map(u => (
+                    <tr key={u.email} className="border-b border-gray-50 dark:border-navy-700/50">
+                      <td className="py-2 pr-3 text-gray-900 dark:text-white break-all">{u.email}</td>
+                      <td className="py-2 pr-3 whitespace-nowrap">
+                        <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${u.role === "Administrador"
+                          ? "bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400"
+                          : u.role === "Editor" || u.role === "Marketer"
+                            ? "bg-orange-100 dark:bg-orange-900/30 text-orange-600 dark:text-orange-400"
+                            : "bg-gray-100 dark:bg-navy-700 text-gray-600 dark:text-gray-300"}`}>{u.role}</span>
+                      </td>
+                      <td className="py-2 pr-3 text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">{ACCESS_SOURCE_LABEL[u.source]}</td>
+                      <td className="py-2 text-xs text-gray-500 dark:text-gray-400">{u.restrictions.join(", ") || "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <p className="text-xs text-gray-400 mt-3">{data.users.length} usuario{data.users.length === 1 ? "" : "s"}. El rol es el más alto entre la property y la cuenta.</p>
+            </div>
+          )}
+        </div>
+
+        <div className="p-4 border-t border-gray-100 dark:border-navy-700 flex gap-2 justify-end flex-wrap">
+          <button onClick={() => load(true)} disabled={loading}
+            className="px-4 py-2 rounded-xl border border-gray-200 dark:border-navy-700 text-sm text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-navy-700 transition">
+            🔄 Actualizar
+          </button>
+          <button onClick={() => data && downloadAccessCsv([data], accessFilename(client.name))}
+            disabled={loading || !data || !!data.error} className="btn-primary text-sm py-2 px-4">
+            ⬇️ Exportar CSV
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function GA4Tab() {
   const [credStatus, setCredStatus] = useState<GA4CredentialsStatus | null>(null);
   const [credJson, setCredJson] = useState("");
@@ -577,6 +708,15 @@ function GA4Tab() {
   const [savingGA4, setSavingGA4] = useState<number | null>(null);
   const [error, setError] = useState("");
   const [msg, setMsg] = useState("");
+  const [accessClient, setAccessClient] = useState<Client | null>(null);
+  const [exportingAll, setExportingAll] = useState(false);
+
+  async function handleExportAllAccess() {
+    setExportingAll(true); setError("");
+    try { downloadAccessCsv(await getGA4AccessAll(), accessFilename("todos")); }
+    catch (err: any) { setError(extractError(err)); }
+    finally { setExportingAll(false); }
+  }
 
   useEffect(() => {
     getGA4CredentialsStatus().then(setCredStatus).catch(() => setCredStatus({ configured: false }));
@@ -604,7 +744,8 @@ function GA4Tab() {
     setSavingGA4(clientId);
     try {
       const val = editingGA4[clientId]?.trim() || null;
-      await updateClientGA4(clientId, val);
+      const updated = await updateClientGA4(clientId, val);
+      setClients(cs => cs.map(c => c.id === clientId ? { ...c, ga4_property_id: updated.ga4_property_id } : c));
       setMsg(`Property ID actualizado ✅`);
     } catch (err: any) { setError(extractError(err)); }
     finally { setSavingGA4(null); setTimeout(() => setMsg(""), 3000); }
@@ -656,6 +797,7 @@ function GA4Tab() {
                   <p className="font-semibold">Pasos:</p>
                   <p>1. Google Cloud → IAM → Service Accounts → descargá el JSON key</p>
                   <p>2. En GA4: Admin → <strong>Property Access Management</strong> → + → ingresá el email del SA → Viewer</p>
+                  <p>3. Para &quot;Ver usuarios&quot;: habilitá la <strong>Google Analytics Admin API</strong> en el proyecto y dale rol <strong>Administrador</strong> al SA</p>
                   <p className="text-yellow-600 dark:text-yellow-400">⚠️ Si GA4 rechaza el email, usá la opción OAuth Token.</p>
                 </div>
                 <textarea className="field h-36 font-mono text-xs"
@@ -673,7 +815,7 @@ function GA4Tab() {
                   <p className="font-semibold">Cómo obtener el Refresh Token (una sola vez):</p>
                   <p>1. Cloud Console → APIs & Services → Credentials → Create OAuth 2.0 Client ID (Desktop app)</p>
                   <p>2. Entrá a <strong>OAuth 2.0 Playground</strong> → Settings → usá tus credenciales</p>
-                  <p>3. Scope: <span className="font-mono">https://www.googleapis.com/auth/analytics.readonly</span></p>
+                  <p>3. Scope: <span className="font-mono">https://www.googleapis.com/auth/analytics.readonly</span> (y para &quot;Ver usuarios&quot;: <span className="font-mono">https://www.googleapis.com/auth/analytics.manage.users.readonly</span>)</p>
                   <p>4. Authorize → Exchange code → copiás el <strong>Refresh Token</strong></p>
                   <p className="text-green-600 dark:text-green-400">✅ Esta opción funciona con cualquier cuenta que tenga acceso a GA4.</p>
                 </div>
@@ -715,7 +857,15 @@ function GA4Tab() {
 
       {/* Property IDs por cliente */}
       <div className="card p-6 space-y-4">
-        <h2 className="font-semibold text-gray-900 dark:text-white">GA4 Property ID por cliente</h2>
+        <div className="flex items-center justify-between flex-wrap gap-3">
+          <h2 className="font-semibold text-gray-900 dark:text-white">GA4 Property ID por cliente</h2>
+          {credStatus?.configured && (
+            <button onClick={handleExportAllAccess} disabled={exportingAll}
+              className="px-3 py-2 rounded-xl border border-gray-200 dark:border-navy-700 text-xs font-semibold text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-navy-700 transition">
+              {exportingAll ? "Exportando..." : "⬇️ Exportar usuarios de todos (CSV)"}
+            </button>
+          )}
+        </div>
         <p className="text-sm text-gray-500 dark:text-gray-400">Formato: <span className="font-mono bg-gray-100 dark:bg-navy-700 px-1 rounded">properties/123456789</span> — lo encontrás en GA4 → Admin → Property Settings.</p>
         {error && <p className="text-red-500 text-sm">{error}</p>}
         {msg && <p className="text-green-500 text-sm">{msg}</p>}
@@ -734,6 +884,12 @@ function GA4Tab() {
                   <button onClick={() => handleSavePropertyId(c.id)} disabled={savingGA4 === c.id}
                     className="btn-primary flex-shrink-0 text-xs py-2 px-3">
                     {savingGA4 === c.id ? "..." : "Guardar"}
+                  </button>
+                  <button onClick={() => setAccessClient(c)}
+                    disabled={!credStatus?.configured || !c.ga4_property_id}
+                    title={!c.ga4_property_id ? "Guardá primero el Property ID" : "Quién tiene acceso a esta property y con qué rol"}
+                    className="flex-shrink-0 text-xs py-2 px-3 rounded-xl border border-gray-200 dark:border-navy-700 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-navy-700 transition disabled:opacity-40 disabled:cursor-not-allowed">
+                    👥 Ver usuarios
                   </button>
                 </div>
                 {/* Resultado de GA4 */}
@@ -764,6 +920,7 @@ function GA4Tab() {
           })}
         </div>
       </div>
+      {accessClient && <GA4AccessModal client={accessClient} onClose={() => setAccessClient(null)} />}
     </div>
   );
 }

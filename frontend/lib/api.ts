@@ -367,6 +367,35 @@ export async function getGA4Realtime(): Promise<GA4RealtimeData[]> {
   return (await api.get<GA4RealtimeData[]>("/ga4/realtime")).data;
 }
 
+export interface GA4AccessUser {
+  email: string;
+  role: string;
+  property_roles: string[];
+  account_roles: string[];
+  restrictions: string[];
+  source: "property" | "account" | "property+account";
+}
+
+export interface GA4Access {
+  client_id: number;
+  client_name: string;
+  property_id: string | null;
+  property_name: string | null;
+  account: string | null;
+  account_name: string | null;
+  users: GA4AccessUser[];
+  account_error: string | null;
+  error: string | null;
+}
+
+export async function getGA4Access(clientId: number, refresh = false): Promise<GA4Access> {
+  return (await api.get<GA4Access>(`/ga4/access/${clientId}`, { params: refresh ? { refresh: true } : {} })).data;
+}
+
+export async function getGA4AccessAll(refresh = false): Promise<GA4Access[]> {
+  return (await api.get<GA4Access[]>("/ga4/access", { params: refresh ? { refresh: true } : {} })).data;
+}
+
 export async function updateClientGA4(id: number, ga4_property_id: string | null): Promise<Client> {
   return (await api.patch<Client>(`/clients/${id}`, { ga4_property_id })).data;
 }

@@ -53,7 +53,7 @@ npm run build    # also the only type check — there is no lint/tsc script
 npm run start
 ```
 
-There is no linter or formatter configured for either backend or frontend. Backend tests cover only pure functions with no DB or network: the rules engine (`test_engine.py`), CMO metrics (`test_executive.py`), GA4 bot heuristics (`test_bot_detection.py`) and Cloudflare IP/UA classification (`test_cloudflare_classify.py`). Keep new logic in these modules I/O-free so it stays testable the same way.
+There is no linter or formatter configured for either backend or frontend. Backend tests cover only pure functions with no DB or network: the rules engine (`test_engine.py`), CMO metrics (`test_executive.py`), GA4 bot heuristics (`test_bot_detection.py`), GA4 access merging (`test_ga4_access.py`) and Cloudflare IP/UA classification (`test_cloudflare_classify.py`). Keep new logic in these modules I/O-free so it stays testable the same way.
 
 ### Docker (full stack)
 
@@ -104,6 +104,8 @@ GET /public/calendar       → all clients, no auth required; month grid of merg
 ### GA4 integration
 
 GA4 service account credentials are stored as JSON in the `integration_configs` table under key `ga4_service_account`. Clients can have a `ga4_property_id`; `GET /ga4/realtime` fetches active users for all configured clients in parallel (up to 8 threads). The public status endpoint uses GA4 data when available, with a fallback to the in-memory GTM tracker (`services/tracker.py`) which counts page view events in a 5-minute sliding window. The tracker is fed by `GET /tracking/{client_id}/ping` — a public, CORS-open endpoint returning a 1x1 GIF so it can be fired as a GTM Custom Image tag. Tracker state is per-process memory (lost on restart, not shared across workers).
+
+**Property access (who can see each GA4 property)**: `GET /ga4/access` and `GET /ga4/access/{client_id}` (admin only) call the GA4 Admin API REST `accessBindings` (v1alpha) through `services/ga4_access.py` using the same stored credentials, but with scope `analytics.manage.users.readonly`. They return property-level users plus users inherited from the parent account. The effective role is the highest of the two, and data restrictions (no-cost/no-revenue) are listed separately. Requirements: the Admin API must be enabled in the Cloud project, and the SA needs the Administrator role (for OAuth, the refresh token needs that scope). If the account-level read fails, the response still returns the property users plus `account_error`. Results are cached 10 min (`?refresh=true` bypasses it). `merge_access()` is pure and tested in `test_ga4_access.py`. In `/admin` → GA4, each client has a "Ver usuarios" button that opens a modal with CSV export, plus an "Exportar usuarios de todos" button. The CSV uses `;` + BOM so Excel in Spanish opens it correctly.
 
 `IntegrationConfig` doubles as generic key/value storage beyond GA4 creds: `GET /public/status` tracks the day's ecosystem-wide peak concurrent users under key `ecosystem_peak_today` (`{"date": ..., "peak": ...}`), persisted on every new peak so it survives container restarts (`tracker.set_peak_state()` reloads it at startup).
 
