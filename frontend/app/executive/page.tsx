@@ -8,7 +8,9 @@ import {
   Delta, ExecLogo, KpiTile, MtdTable, PromoRanking, PromoResults, QualityBadge, Section, Sparkline, Upcoming,
   calendarSummary, change, convLabel, money, num, pctFmt, shortDate, type MtdRow,
 } from "@/components/executive/parts";
-import { extractError, getExecutiveOverview, type ExecClient, type ExecOverview } from "@/lib/api";
+import { Burndown, Segmented, TrendChart } from "@/components/executive/charts";
+import { extractError, getExecutiveOverview, type ExecClient, type ExecEcoDay, type ExecOverview } from "@/lib/api";
+import { downloadText, executiveCsv } from "@/lib/execExport";
 
 type SortKey = "name" | "sessions" | "sessions_d" | "conv" | "conv_d" | "rate" | "aov" | "revenue_d" | "blocked";
 
@@ -109,6 +111,50 @@ function mtdRows(m: NonNullable<ExecOverview["mtd"]>): MtdRow[] {
   return rows;
 }
 
+// ── Metric picker shared by the burndown and the trend ───────────────────────
+
+type Metric = { key: string; label: string; fmt: (v: number) => string; get: (d: ExecEcoDay) => number;
+  mtd: { cur: number; prev_full: number; projection: number } };
+
+function metricOptions(data: ExecOverview): Metric[] {
+  const m = data.mtd;
+  if (!m) return [];
+  const out: Metric[] = m.revenue.map((r) => ({
+    key: `revenue:${r.currency}`, label: m.revenue.length > 1 ? `Ingresos ${r.currency}` : "Ingresos",
+    fmt: (v: number) => money(v, r.currency), get: (d: ExecEcoDay) => d.revenue[r.currency] ?? 0, mtd: r,
+  }));
+  if (m.purchases.cur || m.purchases.prev_full) out.push({ key: "purchases", label: "Compras", fmt: num, get: (d) => d.purchases, mtd: m.purchases });
+  out.push({ key: "sessions", label: "Sesiones", fmt: num, get: (d) => d.sessions, mtd: m.sessions });
+  return out;
+}
+
+const TARGETS = [
+  { value: 0, label: "Mes anterior" },
+  { value: 10, label: "+10%" },
+  { value: 20, label: "+20%" },
+];
+
+/** date -> "Promo · Cliente" for every promo we know about (measured history + active + upcoming). */
+function promoDays(data: ExecOverview): Map<string, string[]> {
+  const seen = new Set<number>();
+  const map = new Map<string, string[]>();
+  const add = (p: { id: number; start_date: string; end_date: string; description: string | null; promo_type: string }, client: string) => {
+    if (seen.has(p.id)) return;
+    seen.add(p.id);
+    const label = `${p.description || (p.promo_type === "PROMO_ESPECIAL" ? "Promo especial" : "Comunicación")} · ${client}`;
+    for (let d = new Date(`${p.start_date}T00:00:00Z`); d <= new Date(`${p.end_date}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + 1)) {
+      const k = d.toISOString().slice(0, 10);
+      map.set(k, [...(map.get(k) ?? []), label]);
+    }
+  };
+  for (const c of data.clients) {
+    for (const p of c.promo_history) add(p, c.client_name);
+    for (const p of c.active_promos) add(p, c.client_name);
+  }
+  for (const p of data.upcoming) add(p, p.client_name);
+  return map;
+}
+
 function CalendarCost({ clients }: { clients: ExecClient[] }) {
   const withCal = clients.filter((c) => c.calendar);
   const rows = withCal
@@ -157,10 +203,43 @@ export default function ExecutivePage() {
   const [data, setData] = useState<ExecOverview | null>(null);
   const [error, setError] = useState("");
   const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({ key: "sessions", desc: true });
+  const [metricKey, setMetricKey] = useState<string | null>(null);
+  const [boost, setBoost] = useState(0);
 
   useEffect(() => {
     getExecutiveOverview().then(setData).catch((e) => setError(extractError(e)));
   }, []);
+
+  // Print/PDF always comes out light: the browser drops dark backgrounds and leaves light text on white
+  useEffect(() => {
+    const html = document.documentElement;
+    let wasDark = false;
+    const before = () => { wasDark = html.classList.contains("dark"); html.classList.remove("dark"); };
+    const after = () => { if (wasDark) html.classList.add("dark"); };
+    window.addEventListener("beforeprint", before);
+    window.addEventListener("afterprint", after);
+    return () => { window.removeEventListener("beforeprint", before); window.removeEventListener("afterprint", after); };
+  }, []);
+
+  const metrics = useMemo(() => (data ? metricOptions(data) : []), [data]);
+  const metric = metrics.find((m) => m.key === metricKey) ?? metrics[0];
+  const promosByDay = useMemo(() => (data ? promoDays(data) : new Map<string, string[]>()), [data]);
+  const monthValues = useMemo(
+    () => (data?.mtd && metric ? data.daily.filter((d) => d.date.startsWith(data.mtd!.month)).map(metric.get) : []),
+    [data, metric]);
+  const target = metric ? metric.mtd.prev_full * (1 + boost / 100) : 0;
+  const targetLabel = boost ? `el mes anterior +${boost}%` : "el total del mes anterior";
+  const notes = useMemo(() => (data ? highlights(data) : []), [data]);
+
+  const exportCsv = () => {
+    if (!data) return;
+    const done = monthValues.reduce((a, b) => a + b, 0);
+    const csv = executiveCsv(data, notes.map((h) => h.text), metric && target > 0 ? {
+      metric: metric.label, target_label: boost ? `Mes anterior +${boost}%` : "Mes anterior", target, done,
+      projected: data.mtd ? (done / Math.max(monthValues.length, 1)) * data.mtd.days_in_month : done,
+    } : null);
+    downloadText(`rendimiento-comercial-${new Date().toISOString().slice(0, 10)}.csv`, csv);
+  };
 
   const rows = useMemo(() => {
     if (!data) return [];
@@ -204,17 +283,39 @@ export default function ExecutivePage() {
   return (
     <AuthGuard>
       <div className="space-y-6">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-1">Rendimiento comercial</h1>
-          <p className="text-gray-500 dark:text-gray-400 text-sm">
-            Últimos 7 días completos vs. los 7 anteriores{dataThrough ? ` · datos hasta el ${shortDate(dataThrough)}` : ""} · fuente: Google Analytics 4
-          </p>
-        </div>
+        <header className="flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-1">Rendimiento comercial</h1>
+            <p className="text-gray-500 dark:text-gray-400 text-sm">
+              {dataThrough ? `Datos hasta el ${shortDate(dataThrough)}` : "Datos hasta ayer"} · fuente: Google Analytics 4
+              <span className="hidden print:inline"> · generado el {new Date().toLocaleString("es-AR")}</span>
+            </p>
+          </div>
+          {data?.ga4_configured && (
+            <div className="flex flex-wrap gap-2 print:hidden">
+              <button type="button" onClick={exportCsv} className="btn-secondary inline-flex items-center gap-2 min-h-[36px]">
+                <svg className="w-4 h-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
+                  <path d="M10 3v10m0 0l-4-4m4 4l4-4M4 15v2h12v-2" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+                Descargar CSV
+              </button>
+              <button type="button" onClick={() => window.print()} className="btn-secondary inline-flex items-center gap-2 min-h-[36px]">
+                <svg className="w-4 h-4" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
+                  <path d="M6 7V3h8v4M6 14H4V8h12v6h-2M6 11h8v6H6z" strokeLinejoin="round" />
+                </svg>
+                Imprimir o guardar PDF
+              </button>
+            </div>
+          )}
+        </header>
 
         {error && <div className="card p-5 text-sm text-down">No se pudo cargar: {error}</div>}
         {!data && !error && (
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4" aria-busy>
-            {[0, 1, 2, 3].map((i) => <div key={i} className="card h-36 animate-pulse" />)}
+          <div className="space-y-4" aria-busy>
+            <div className="card h-80 animate-pulse" />
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+              {[0, 1, 2, 3].map((i) => <div key={i} className="card h-36 animate-pulse" />)}
+            </div>
           </div>
         )}
         {data && !data.ga4_configured && (
@@ -225,8 +326,42 @@ export default function ExecutivePage() {
 
         {data && eco && data.ga4_configured && (
           <>
-            {/* KPI row */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            {/* One control row, above everything it scopes */}
+            {metric && data.mtd && (
+              <div className="flex flex-wrap items-center gap-x-6 gap-y-3 print:hidden">
+                <Segmented label="Métrica" value={metric.key} options={metrics.map((m) => ({ value: m.key, label: m.label }))} onChange={setMetricKey} />
+                <Segmented label="Objetivo" value={boost} options={TARGETS} onChange={setBoost} />
+              </div>
+            )}
+
+            {/* Hero: are we going to make the month? */}
+            {metric && data.mtd && (
+              <section className="card p-5 sm:p-6 break-inside-avoid">
+                <p className="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-2">
+                  Camino al objetivo · {monthName(data.mtd.month)}
+                </p>
+                <Burndown
+                  month={data.mtd.month}
+                  values={monthValues}
+                  daysInMonth={data.mtd.days_in_month}
+                  target={target}
+                  format={metric.fmt}
+                  metricLabel={metric.label}
+                  targetLabel={targetLabel}
+                />
+                <div className="mt-6 pt-5 border-t border-gray-100 dark:border-navy-700">
+                  <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-3">Todas las métricas del mes</h3>
+                  <MtdTable elapsed={data.mtd.days_elapsed} total={data.mtd.days_in_month} rows={mtdRows(data.mtd)} />
+                </div>
+              </section>
+            )}
+
+            {/* KPI row: last 7 complete days */}
+            <div className="break-inside-avoid">
+              <h2 className="text-sm font-semibold text-gray-900 dark:text-white mb-3">
+                Últimos 7 días <span className="font-normal text-gray-500 dark:text-gray-400">vs. los 7 anteriores</span>
+              </h2>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 print:grid-cols-4">
               <KpiTile
                 label="Ingresos"
                 value={eco.revenue[0] ? money(eco.revenue[0].cur, eco.revenue[0].currency) : "—"}
@@ -283,19 +418,21 @@ export default function ExecutivePage() {
                 hint={`${eco.clients_with_data} clientes con datos`}
               />
             </div>
+            </div>
 
-            {/* Month to date */}
-            {data.mtd && (
-              <Section title="Mes en curso" subtitle={`${monthName(data.mtd.month)} hasta ${dataThrough ? `el ${shortDate(dataThrough)}` : "ayer"}, vs. los mismos días del mes anterior`}>
-                <MtdTable elapsed={data.mtd.days_elapsed} total={data.mtd.days_in_month} rows={mtdRows(data.mtd)} />
+            {metric && data.daily.length > 1 && (
+              <Section title={`${metric.label} por día`}
+                       subtitle="Este mes y el anterior. Las franjas grises son los días con al menos una promoción en el calendario.">
+                <TrendChart points={data.daily.map((d) => ({ date: d.date, value: metric.get(d) }))} format={metric.fmt}
+                            promos={promosByDay} currentFrom={`${data.mtd?.month ?? ""}-01`} metricLabel={metric.label} />
               </Section>
             )}
 
             {/* Highlights */}
-            {highlights(data).length > 0 && (
+            {notes.length > 0 && (
               <Section title="Lo más importante de la semana">
                 <ul className="space-y-2.5">
-                  {highlights(data).map((h, i) => (
+                  {notes.map((h, i) => (
                     <li key={i} className="flex gap-3 text-sm">
                       <span aria-hidden className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${h.tone === "up" ? "bg-up" : h.tone === "down" ? "bg-down" : "bg-series"}`} />
                       {h.href

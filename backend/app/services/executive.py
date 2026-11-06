@@ -232,6 +232,29 @@ def ecosystem_mtd(clients: list[dict]) -> dict | None:
     }
 
 
+def ecosystem_daily(clients: list[dict], days: int) -> list[dict]:
+    """Daily totals over clients for the last `days` days of each client's series.
+
+    `clients` items carry `daily` (the filled daily series), `kpis` and `currency`.
+    Purchases only count clients that report ecommerce, like `ecosystem_kpis`;
+    revenue is kept per currency (no FX conversion).
+    """
+    out: dict[str, dict] = {}
+    for c in clients:
+        if not c.get("kpis") or not c.get("daily"):
+            continue
+        ecom = c["kpis"]["conversion_key"] == "purchases"
+        cur = c.get("currency") or "?"
+        for d in c["daily"][-days:]:
+            row = out.setdefault(d["date"], {"date": d["date"], "sessions": 0.0, "purchases": 0.0, "revenue": {}})
+            row["sessions"] += d["sessions"]
+            if ecom:
+                row["purchases"] += d["purchases"]
+            if c["kpis"]["has_revenue"]:
+                row["revenue"][cur] = row["revenue"].get(cur, 0.0) + d["revenue"]
+    return [out[k] for k in sorted(out)]
+
+
 # ── Promo ranking ─────────────────────────────────────────────────────────────
 
 def promo_ranking(results: list[dict]) -> list[dict]:

@@ -632,6 +632,8 @@ export interface ExecClient {
 
 export type ExecRankedPromo = ExecPromoResult & { client_id: number; client_name: string };
 
+export interface ExecEcoDay { date: string; sessions: number; purchases: number; revenue: Record<string, number> }
+
 export interface ExecOverview {
   generated_at: string;
   window_days: number;
@@ -657,6 +659,8 @@ export interface ExecOverview {
     purchases: ExecMtdPeriods;
     revenue: (ExecMtdPeriods & { currency: string })[];
   } | null;
+  /** Ecosystem daily totals, current + previous month (62 days). Revenue per currency. */
+  daily: ExecEcoDay[];
   history_days: number;
   promo_ranking: ExecRanking[];
   best_promos: ExecRankedPromo[];

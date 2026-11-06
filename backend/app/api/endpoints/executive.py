@@ -30,6 +30,7 @@ router = APIRouter(prefix="/executive", tags=["executive"])
 
 WINDOW = 7          # KPI comparison window: last 7 complete days vs. the 7 before
 SPARK_DAYS = 28     # days of daily series sent to the UI
+ECO_DAYS = 62       # ecosystem daily series: covers the current and the previous month
 UPCOMING_DAYS = 14
 WARM_EVERY_MIN = 30  # background refresh; keeps every property younger than CACHE_TTL
 # Promos old enough to have a full baseline inside the GA4 series get ranked
@@ -137,6 +138,7 @@ def _client_block(
         "currency": ga.get("currency"),
         "kpis": kpis,
         "series": series[-SPARK_DAYS:],
+        "_daily": series,  # full series, popped by build_overview after aggregating
         "channels": [{**c, "quality": ex.traffic_quality(c, conv_key)} for c in ga.get("channels", [])],
         "campaigns": [{**c, "quality": ex.traffic_quality(c, conv_key)} for c in ga.get("campaigns", [])],
         "devices": ex.segment_rows(ga.get("devices", []), conv_key),
@@ -231,12 +233,17 @@ def build_overview(db: Session, max_age: float = ga4_reports.CACHE_TTL) -> dict:
         key=lambda c: (-c["quality"]["score"], -c["sessions"]),
     )
 
+    daily = ex.ecosystem_daily([{**b, "daily": b.get("_daily")} for b in blocks], ECO_DAYS)
+    for b in blocks:
+        b.pop("_daily", None)
+
     return {
         "generated_at": datetime.utcnow().isoformat() + "Z",
         "window_days": WINDOW,
         "ga4_configured": bool(creds),
         "ecosystem": ex.ecosystem_kpis(blocks),
         "mtd": ex.ecosystem_mtd(blocks),
+        "daily": daily,
         "history_days": HISTORY_DAYS,
         "promo_ranking": ex.promo_ranking(all_history),
         "best_promos": ranked[:5],

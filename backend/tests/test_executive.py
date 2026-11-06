@@ -131,6 +131,18 @@ def test_ecosystem_mtd_sums_and_groups_by_currency():
     assert ex.ecosystem_mtd([{"kpis": None}]) is None
 
 
+def test_ecosystem_daily_sums_clients_and_keeps_currency():
+    def block(cur, **kw):
+        s = series(**kw)
+        return {"currency": cur, "kpis": ex.client_kpis(s, END), "daily": s}
+    d = ex.ecosystem_daily([block("ARS"), block("MXN"), block("ARS", purchases=0, revenue=0), {"kpis": None}], 5)
+    assert len(d) == 5 and d[-1]["date"] == END.isoformat()
+    one = series()[-1]
+    assert d[-1]["sessions"] == 3 * one["sessions"]
+    assert d[-1]["purchases"] == 2 * one["purchases"]  # the non-ecommerce client is left out
+    assert d[-1]["revenue"] == {"ARS": one["revenue"], "MXN": one["revenue"]}
+
+
 # ── Promo ranking ────────────────────────────────────────────────────────────
 
 def _res(ptype, conv, rev=None):

@@ -88,3 +88,22 @@ body {
            dark:bg-navy-800 dark:border-navy-700;
   }
 }
+
+@layer components {
+  .btn-secondary {
+    @apply font-medium px-4 py-2 rounded-xl transition text-sm border
+           bg-white border-gray-200 text-gray-800 hover:bg-gray-50
+           dark:bg-navy-800 dark:border-navy-700 dark:text-gray-100 dark:hover:bg-navy-700;
+  }
+}
+
+/* Print / "Guardar como PDF" from /executive: no nav or controls, cards stay whole */
+@media print {
+  @page { margin: 14mm; }
+  nav { display: none !important; }
+  body, main { background: #fff !important; }
+  main { max-width: none !important; padding: 0 !important; }
+  .card { break-inside: avoid; border-color: #D9DDE3; }
+  .overflow-x-auto { overflow: visible !important; }
+  table { min-width: 0 !important; }
+}
