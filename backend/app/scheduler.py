@@ -48,6 +48,26 @@ def rebuild_notification_jobs(time_1: str | None, time_2: str | None, time_3: st
             )
 
 
+# ── Weekly CMO digest ─────────────────────────────────────────────────────────
+
+def rebuild_digest_job(cfg) -> None:
+    """(Re)creates the `executive_digest` job from a DigestConfig (or removes it)."""
+    from app.api.endpoints.executive import digest_job
+
+    if scheduler.get_job("executive_digest"):
+        scheduler.remove_job("executive_digest")
+    if not cfg or not cfg.enabled or not cfg.webhook_url:
+        return
+    hour, minute = map(int, cfg.time.split(":"))
+    scheduler.add_job(
+        digest_job,
+        CronTrigger(day_of_week=cfg.weekday, hour=hour, minute=minute, timezone="UTC"),
+        id="executive_digest",
+        replace_existing=True,
+        max_instances=1,
+    )
+
+
 # ── Team notifications ─────────────────────────────────────────────────────────
 
 def _team_notify_job(team_id: int, slot_id: int):

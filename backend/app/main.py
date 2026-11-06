@@ -35,6 +35,17 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(warm_cache, "interval", minutes=WARM_EVERY_MIN, id="executive_warm",
                       next_run_time=_dt.utcnow(), replace_existing=True)
 
+    # Resumen semanal de negocio a Google Chat (config en IntegrationConfig "executive_digest")
+    from app.api.endpoints.executive import load_digest_config
+    from app.scheduler import rebuild_digest_job
+    db3 = SessionLocal()
+    try:
+        rebuild_digest_job(load_digest_config(db3))
+    except Exception as e:
+        print(f"[executive digest] no se pudo programar: {e}")
+    finally:
+        db3.close()
+
     # Restaurar el pico de usuarios del día desde la DB
     from app.models.integration_config import IntegrationConfig
     from app.services import tracker

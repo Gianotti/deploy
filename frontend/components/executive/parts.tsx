@@ -5,7 +5,10 @@
 import Image from "next/image";
 import { useState } from "react";
 import ClientAvatar from "@/components/ClientAvatar";
-import type { ExecClient, ExecDay, ExecPair, ExecPairN, ExecPromo, ExecPromoResult } from "@/lib/api";
+import type {
+  ExecCalendar, ExecClient, ExecDay, ExecFunnel, ExecItem, ExecPair, ExecPairN, ExecPromo, ExecPromoResult,
+  ExecQuality, ExecRanking, ExecSegment,
+} from "@/lib/api";
 
 // ── Formatting ────────────────────────────────────────────────────────────────
 
@@ -196,12 +199,13 @@ export function DailyBars({ title, series, metric, format, promos }: {
 
 // ── Promo results table ───────────────────────────────────────────────────────
 
-export function PromoResults({ rows, showClient }: {
+export function PromoResults({ rows, showClient, emptyText = "Sin promociones medibles en los últimos 30 días." }: {
   rows: (ExecPromoResult & { client_name?: string; client?: ExecClient })[];
   showClient?: boolean;
+  emptyText?: string;
 }) {
   if (rows.length === 0) {
-    return <p className="text-sm text-gray-500 dark:text-gray-400">Sin promociones medibles en los últimos 30 días.</p>;
+    return <p className="text-sm text-gray-500 dark:text-gray-400">{emptyText}</p>;
   }
   return (
     <div className="overflow-x-auto -mx-5 px-5">
@@ -226,8 +230,7 @@ export function PromoResults({ rows, showClient }: {
                   {PROMO_TYPE[p.promo_type]}{p.ongoing ? " · en curso" : ""}
                 </span>
               </td>
-              <td className="py-2.5 pr-4 whitespace-nowrap text-gray-600 dark:text-gray-300">{range(p.start_date, p.end_date)}</td>
-              <td className="py-2.5 pr-4 text-right"><Delta value={p.sessions.lift} /></td>
+              <td className="py-2.5 pr-4 whitespace-nowrap text-gray-600 dark:text-gray-300">{range(p.start_date, p.end_date)}</td>              <td className="py-2.5 pr-4 text-right"><Delta value={p.sessions.lift} /></td>
               <td className="py-2.5 pr-4 text-right"><Delta value={p.conversions.lift} /></td>
               <td className="py-2.5 text-right">{p.revenue.baseline > 0 ? <Delta value={p.revenue.lift} /> : <span className="text-ink-3">—</span>}</td>
             </tr>
@@ -280,4 +283,225 @@ export function Section({ title, subtitle, children, action }: {
       {children}
     </section>
   );
+}
+
+const muted = "text-gray-500 dark:text-gray-400";
+const thCls = `py-2 pr-4 font-medium ${muted}`;
+const rowCls = "border-b border-gray-100 dark:border-navy-700/60 last:border-0";
+
+function ShareBar({ value }: { value: number | null }) {
+  return (
+    <div className="mt-1 h-1 rounded-full bg-gray-100 dark:bg-navy-700 overflow-hidden" aria-hidden>
+      <div className="h-full rounded-full bg-series" style={{ width: `${Math.min(1, value ?? 0) * 100}%` }} />
+    </div>
+  );
+}
+
+// ── Traffic quality badge (GA4 engagement heuristic) ──────────────────────────
+
+export function QualityBadge({ q }: { q?: ExecQuality }) {
+  if (!q || (q.level !== "likely" && q.level !== "possible")) return null;
+  const likely = q.level === "likely";
+  return (
+    <span
+      title={q.reasons.join(" · ")}
+      className={`ml-1.5 inline-block align-middle rounded-full px-1.5 py-0.5 text-[10px] font-medium ${likely ? "bg-down/10 text-down" : "bg-amber-500/10 text-amber-700 dark:text-amber-400"}`}
+    >
+      {likely ? "Tráfico sospechoso" : "Calidad baja"}
+    </span>
+  );
+}
+
+// ── Month to date ─────────────────────────────────────────────────────────────
+
+export interface MtdRow { label: string; cur: number; prev: number; projection: number; prevFull: number; fmt: (v: number) => string }
+
+export function MtdTable({ rows, elapsed, total }: { rows: MtdRow[]; elapsed: number; total: number }) {
+  return (
+    <div>
+      <div className="flex items-center gap-3 mb-4 text-xs text-gray-500 dark:text-gray-400">
+        <span className="whitespace-nowrap">Día {elapsed} de {total}</span>
+        <div className="flex-1 h-1.5 rounded-full bg-gray-100 dark:bg-navy-700 overflow-hidden" aria-hidden>
+          <div className="h-full rounded-full bg-series" style={{ width: `${(elapsed / total) * 100}%` }} />
+        </div>
+      </div>
+      <div className="overflow-x-auto -mx-5 px-5">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-left text-xs border-b border-gray-200 dark:border-navy-700">
+              <th className={thCls}>Métrica</th>
+              <th className={`${thCls} text-right`}>Mes a la fecha</th>
+              <th className={`${thCls} text-right`}>vs. mismo período</th>
+              <th className={`${thCls} text-right`}>Proyección cierre</th>
+              <th className={`py-2 font-medium text-right ${muted}`}>vs. mes anterior</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.label} className={rowCls}>
+                <td className="py-2.5 pr-4 text-gray-900 dark:text-white">{r.label}</td>
+                <td className="py-2.5 pr-4 text-right tabular-nums text-gray-900 dark:text-white font-medium whitespace-nowrap">{r.fmt(r.cur)}</td>
+                <td className="py-2.5 pr-4 text-right"><Delta value={change({ cur: r.cur, prev: r.prev })} /></td>
+                <td className="py-2.5 pr-4 text-right tabular-nums text-gray-700 dark:text-gray-300 whitespace-nowrap">{r.fmt(r.projection)}</td>
+                <td className="py-2.5 text-right"><Delta value={change({ cur: r.projection, prev: r.prevFull })} /></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className={`mt-3 text-xs ${muted}`}>
+        La proyección extiende el ritmo diario del mes al total de días (no anticipa promos futuras). La última columna compara la proyección con el mes anterior completo.
+      </p>
+    </div>
+  );
+}
+
+// ── Promo ranking by type ─────────────────────────────────────────────────────
+
+export function PromoRanking({ rows, days }: { rows: ExecRanking[]; days: number }) {
+  if (rows.length === 0) return <p className={`text-sm ${muted}`}>Todavía no hay promociones medibles en los últimos {days} días.</p>;
+  return (
+    <div className="overflow-x-auto -mx-5 px-5">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="text-left text-xs border-b border-gray-200 dark:border-navy-700">
+            <th className={thCls}>Tipo</th>
+            <th className={`${thCls} text-right`}>Promos medidas</th>
+            <th className={`${thCls} text-right`}>Conversión / día</th>
+            <th className={`${thCls} text-right`}>Ingresos / día</th>
+            <th className={`py-2 font-medium text-right ${muted}`}>Con suba</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.promo_type} className={rowCls}>
+              <td className="py-2.5 pr-4 text-gray-900 dark:text-white">{PROMO_TYPE[r.promo_type]}</td>
+              <td className="py-2.5 pr-4 text-right tabular-nums text-gray-700 dark:text-gray-300">{r.count}</td>
+              <td className="py-2.5 pr-4 text-right"><Delta value={r.avg_conversion_lift} /></td>
+              <td className="py-2.5 pr-4 text-right"><Delta value={r.avg_revenue_lift} /></td>
+              <td className="py-2.5 text-right tabular-nums text-gray-700 dark:text-gray-300">{pctFmt(r.win_rate, 0)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className={`mt-3 text-xs ${muted}`}>Promedio del lift de cada promo vs. su línea base. &quot;Con suba&quot;: % de promos cuyas conversiones subieron.</p>
+    </div>
+  );
+}
+
+// ── Ecommerce funnel ──────────────────────────────────────────────────────────
+
+export function Funnel({ funnel }: { funnel: ExecFunnel | null }) {
+  if (!funnel) return <p className={`text-sm ${muted}`}>Esta propiedad no envía los eventos de ecommerce del embudo (view_item, add_to_cart, begin_checkout).</p>;
+  const max = Math.max(...funnel.steps.map((s) => s.count), 1);
+  return (
+    <div>
+      <ol className="space-y-3">
+        {funnel.steps.map((s) => (
+          <li key={s.event}>
+            <div className="flex items-baseline justify-between gap-3 text-sm">
+              <span className="text-gray-900 dark:text-white">{s.label}</span>
+              <span className="tabular-nums text-gray-700 dark:text-gray-300">
+                {num(s.count)}
+                {s.from_prev != null && <span className={`ml-2 text-xs ${muted}`}>{pctFmt(s.from_prev, 0)} del paso anterior</span>}
+              </span>
+            </div>
+            <div className="mt-1 h-2.5 rounded bg-gray-100 dark:bg-navy-700 overflow-hidden" aria-hidden>
+              <div className="h-full rounded bg-series" style={{ width: `${(s.count / max) * 100}%` }} />
+            </div>
+          </li>
+        ))}
+      </ol>
+      <p className={`mt-4 text-sm ${muted}`}>
+        Abandono de carrito: <b className="font-medium text-gray-900 dark:text-white">{pctFmt(funnel.cart_abandonment, 0)}</b>
+        {funnel.view_to_purchase != null && <> · de vista a compra: <b className="font-medium text-gray-900 dark:text-white">{pctFmt(funnel.view_to_purchase, 2)}</b></>}
+      </p>
+      <p className={`mt-1 text-xs ${muted}`}>Cantidad de eventos en los últimos 7 días.</p>
+    </div>
+  );
+}
+
+// ── Device / new-vs-returning ─────────────────────────────────────────────────
+
+const SEGMENT_LABEL: Record<string, string> = {
+  mobile: "Mobile", desktop: "Desktop", tablet: "Tablet", "smart tv": "Smart TV",
+  new: "Nuevos", returning: "Recurrentes",
+};
+
+export function SegmentTable({ client, rows, label }: { client: ExecClient; rows: ExecSegment[]; label: string }) {
+  if (rows.length === 0) return <p className={`text-sm ${muted}`}>Sin datos en los últimos 7 días.</p>;
+  return (
+    <div className="overflow-x-auto -mx-5 px-5">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="text-left text-xs border-b border-gray-200 dark:border-navy-700">
+            <th className={thCls}>{label}</th>
+            <th className={`${thCls} text-right`}>Sesiones</th>
+            <th className={`${thCls} text-right`}>Tasa {convLabel(client, false)}</th>
+            <th className={`py-2 font-medium text-right ${muted}`}>Interacción</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.segment} className={rowCls}>
+              <td className="py-2.5 pr-4">
+                <div className="flex justify-between gap-2 text-gray-900 dark:text-white">
+                  {SEGMENT_LABEL[r.segment] ?? r.segment}
+                  <span className={`text-xs tabular-nums ${muted}`}>{pctFmt(r.share, 0)}</span>
+                </div>
+                <ShareBar value={r.share} />
+              </td>
+              <td className="py-2.5 pr-4 text-right tabular-nums text-gray-700 dark:text-gray-300">{num(r.sessions)}</td>
+              <td className="py-2.5 pr-4 text-right tabular-nums text-gray-900 dark:text-white font-medium">{pctFmt(r.conversion_rate, 2)}</td>
+              <td className="py-2.5 text-right tabular-nums text-gray-700 dark:text-gray-300">{pctFmt(r.engagement_rate, 0)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// ── Top products ──────────────────────────────────────────────────────────────
+
+export function TopItems({ items, currency }: { items: ExecItem[]; currency: string | null }) {
+  if (items.length === 0) return <p className={`text-sm ${muted}`}>Esta propiedad no envía datos de productos (items) en sus eventos de ecommerce.</p>;
+  const max = Math.max(...items.map((i) => i.revenue), 1);
+  return (
+    <div className="overflow-x-auto -mx-5 px-5">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="text-left text-xs border-b border-gray-200 dark:border-navy-700">
+            <th className={thCls}>Producto</th>
+            <th className={`${thCls} text-right`}>Unidades</th>
+            <th className={`py-2 font-medium text-right ${muted}`}>Ingresos</th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((i) => (
+            <tr key={i.item} className={rowCls}>
+              <td className="py-2.5 pr-4 max-w-[280px]">
+                <div className="truncate text-gray-900 dark:text-white" title={i.item}>{i.item}</div>
+                <ShareBar value={i.revenue / max} />
+              </td>
+              <td className="py-2.5 pr-4 text-right tabular-nums text-gray-700 dark:text-gray-300">{num(i.quantity)}</td>
+              <td className="py-2.5 text-right tabular-nums text-gray-900 dark:text-white whitespace-nowrap">{money(i.revenue, currency)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// ── Deploy calendar load ──────────────────────────────────────────────────────
+
+export function calendarSummary(c: ExecCalendar): string {
+  const blocked = c.blocked_past + c.blocked_ahead;
+  const restricted = c.restricted_past + c.restricted_ahead;
+  if (!blocked && !restricted) return "Sin restricciones de deploy este mes.";
+  const parts = [];
+  if (blocked) parts.push(`${blocked} día${blocked > 1 ? "s" : ""} bloqueado${blocked > 1 ? "s" : ""}`);
+  if (restricted) parts.push(`${restricted} restringido${restricted > 1 ? "s" : ""}`);
+  return `${parts.join(" y ")} de ${c.days_in_month} este mes (${c.blocked_ahead + c.restricted_ahead} todavía por venir).`;
 }

@@ -111,11 +111,21 @@ GA4 service account credentials are stored as JSON in the `integration_configs` 
 
 ### Executive (CMO) view
 
-`GET /executive/overview` (auth required, because revenue must never reach `/public/*`) builds the whole `/executive` payload. `services/ga4_reports.py` runs a single GA4 Data API batch per property: 70 days of daily sessions/keyEvents/purchases/revenue, plus a 7-day channel breakdown and a 7-day campaign breakdown. It caches the result for 1h and returns stale data on error. The APScheduler job `executive_warm` (every 30 min) keeps that cache warm. All of the math lives in `services/executive.py` and is pure:
+`GET /executive/overview` (auth required, because revenue must never reach `/public/*`) builds the whole `/executive` payload. `services/ga4_reports.py` runs two GA4 Data API batches per property (max 5 reports per batch):
+- Batch 1: `SERIES_DAYS` (180) days of daily sessions/keyEvents/purchases/revenue, plus 7-day breakdowns by channel, campaign, device and new-vs-returning (with engaged sessions + engagement time).
+- Batch 2 (optional, ecommerce detail): the funnel events (`view_item` → `add_to_cart` → `begin_checkout` → `purchase`) and the top 10 items by revenue. If it fails, the property still renders without funnel/items.
+
+It caches the result for 1h and returns stale data on error. The APScheduler job `executive_warm` (every 30 min) keeps that cache warm. All of the math lives in `services/executive.py` and is pure:
 - Windows cover complete days only: the last 7 days vs. the 7 before them.
 - The conversion metric is purchases when the property reports ecommerce, otherwise key events.
-- Revenue is grouped per currency; there is no FX conversion.
-- Promo lift is the average per day during the promo vs. up to 14 earlier days with no promos for that same client.
+- Revenue is grouped per currency; there is no FX conversion. Average ticket and revenue per session are computed per currency.
+- Promo lift is the average per day during the promo vs. up to 14 earlier days with no promos for that same client. `promo_ranking()` aggregates every measurable promo of the last `HISTORY_DAYS` (= `SERIES_DAYS` − baseline lookback) by type.
+- `month_to_date()` / `ecosystem_mtd()`: current month up to yesterday vs. the same days of the previous month, plus a linear month-end projection.
+- `traffic_quality()` flags channels/campaigns with ≥100 sessions and very low engagement/conversions (`likely`/`possible`). These are a GA4-only heuristic, separate from `bot_detection.py`. The current Cloudflare `bot_share` is shown next to them.
+- `funnel_steps()`, `segment_rows()` (device, new vs. returning), `calendar_load()` (blocked/restricted days this month, from the rules engine including repository-linked clients). Traffic-threshold blocks are **not** included because their history isn't stored.
+- `alerts()` flags week-over-week drops ≥20% (with minimum-volume guards). `digest_text()` renders the Google Chat weekly digest.
+
+Weekly digest: config lives in `IntegrationConfig` key `executive_digest` (`enabled`, `webhook_url`, `weekday` 0=Mon, `time` HH:MM UTC, `base_url`). The scheduler job `executive_digest` (`rebuild_digest_job()`) is restored in `lifespan` and rebuilt on save. Admin endpoints: `GET/POST /executive/digest/config`, `POST /executive/digest/test`, `GET /executive/digest/preview`. UI: `/admin` → Notificaciones.
 
 `backend/scripts/check_ga4_ecommerce.py` is a read-only check of which properties really report ecommerce.
 

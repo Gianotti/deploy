@@ -5,12 +5,12 @@ import { useEffect, useMemo, useState } from "react";
 import AuthGuard from "@/components/AuthGuard";
 import { clientSlug } from "@/components/landing/parts";
 import {
-  Delta, ExecLogo, KpiTile, PromoResults, Section, Sparkline, Upcoming,
-  change, convLabel, money, num, pctFmt, shortDate,
+  Delta, ExecLogo, KpiTile, MtdTable, PromoRanking, PromoResults, QualityBadge, Section, Sparkline, Upcoming,
+  calendarSummary, change, convLabel, money, num, pctFmt, shortDate, type MtdRow,
 } from "@/components/executive/parts";
 import { extractError, getExecutiveOverview, type ExecClient, type ExecOverview } from "@/lib/api";
 
-type SortKey = "name" | "sessions" | "sessions_d" | "conv" | "conv_d" | "rate" | "revenue_d";
+type SortKey = "name" | "sessions" | "sessions_d" | "conv" | "conv_d" | "rate" | "aov" | "revenue_d" | "blocked";
 
 // Thresholds so a tiny client going 2 → 4 sales doesn't headline as "+100%"
 const MIN_SESSIONS = 500;
@@ -19,6 +19,7 @@ const MIN_CONVERSIONS = 10;
 function sortValue(c: ExecClient, k: SortKey): number | string {
   const kp = c.kpis;
   if (k === "name") return c.client_name.toLowerCase();
+  if (k === "blocked") return c.calendar ? c.calendar.blocked_past + c.calendar.blocked_ahead : -Infinity;
   if (!kp) return -Infinity;
   switch (k) {
     case "sessions": return kp.sessions.cur;
@@ -26,12 +27,25 @@ function sortValue(c: ExecClient, k: SortKey): number | string {
     case "conv": return kp.conversions.cur;
     case "conv_d": return change(kp.conversions) ?? -Infinity;
     case "rate": return kp.conversion_rate.cur ?? -Infinity;
+    case "aov": return kp.avg_order_value?.cur ?? -Infinity;
     case "revenue_d": return change(kp.revenue) ?? -Infinity;
   }
 }
 
 function highlights(data: ExecOverview): { tone: "up" | "down" | "info"; text: string; href?: string }[] {
   const out: { tone: "up" | "down" | "info"; text: string; href?: string }[] = [];
+  const byId = new Map(data.clients.map((c) => [c.client_id, c]));
+
+  // Drops of 20%+ week over week (computed server-side; same list as the weekly digest)
+  const alertsByClient = new Map<number, string[]>();
+  for (const a of data.alerts) {
+    alertsByClient.set(a.client_id, [...(alertsByClient.get(a.client_id) ?? []), `${a.label.toLowerCase()} ${Math.round(a.change * 100)}%`]);
+  }
+  alertsByClient.forEach((parts, id) => {
+    const c = byId.get(id);
+    if (c) out.push({ tone: "down", href: `/executive/${clientSlug(c)}`, text: `Alerta — ${c.client_name}: ${parts.join(", ")} vs. la semana anterior.` });
+  });
+
   const solid = data.clients.filter((c) =>
     c.kpis && c.kpis.sessions.prev >= MIN_SESSIONS && c.kpis.conversions.prev >= MIN_CONVERSIONS);
   const byConv = solid
@@ -46,7 +60,7 @@ function highlights(data: ExecOverview): { tone: "up" | "down" | "info"; text: s
       text: `${best.c.client_name} es el que más crece: ${convLabel(best.c).toLowerCase()} ${pct(best.d)} vs. la semana anterior.` });
   }
   const worst = byConv[byConv.length - 1];
-  if (worst && worst !== best && worst.d < -0.05) {
+  if (worst && worst !== best && worst.d < -0.05 && !alertsByClient.has(worst.c.client_id)) {
     out.push({ tone: "down", href: `/executive/${clientSlug(worst.c)}`,
       text: `${worst.c.client_name} cae: ${convLabel(worst.c).toLowerCase()} ${pct(worst.d)} vs. la semana anterior.` });
   }
@@ -65,11 +79,78 @@ function highlights(data: ExecOverview): { tone: "up" | "down" | "info"; text: s
       text: `${flop.p.description || "Una promo"} (${flop.c.client_name}) no movió la aguja: ${convLabel(flop.c).toLowerCase()} ${pct(flop.p.conversions.lift!)} por día vs. su línea base.` });
   }
 
+  if (data.suspicious_campaigns.length) {
+    const s = data.suspicious_campaigns[0];
+    out.push({ tone: "down", text: `${data.suspicious_campaigns.length} campaña${data.suspicious_campaigns.length > 1 ? "s" : ""} con tráfico de baja calidad; la mayor, "${s.campaign}" de ${s.client_name} (${num(s.sessions)} sesiones casi sin interacción).` });
+  }
+
   const nextWeek = data.upcoming.filter((u) => u.start_date > new Date().toISOString().slice(0, 10));
   if (nextWeek.length) {
     out.push({ tone: "info", text: `${nextWeek.length} promo${nextWeek.length > 1 ? "s" : ""} por arrancar en los próximos 14 días; la primera, ${nextWeek[0].client_name} el ${shortDate(nextWeek[0].start_date)}.` });
   }
   return out;
+}
+
+const monthFmt = new Intl.DateTimeFormat("es-AR", { month: "long", year: "numeric", timeZone: "UTC" });
+const monthName = (ym: string) => {
+  const s = monthFmt.format(new Date(`${ym}-01T00:00:00Z`));
+  return s.charAt(0).toUpperCase() + s.slice(1);
+};
+
+function mtdRows(m: NonNullable<ExecOverview["mtd"]>): MtdRow[] {
+  const rows: MtdRow[] = m.revenue.map((r) => ({
+    label: `Ingresos ${r.currency}`, cur: r.cur, prev: r.prev, projection: r.projection, prevFull: r.prev_full,
+    fmt: (v: number) => money(v, r.currency),
+  }));
+  if (m.purchases.cur || m.purchases.prev) {
+    rows.push({ label: "Compras", cur: m.purchases.cur, prev: m.purchases.prev, projection: m.purchases.projection, prevFull: m.purchases.prev_full, fmt: num });
+  }
+  rows.push({ label: "Sesiones", cur: m.sessions.cur, prev: m.sessions.prev, projection: m.sessions.projection, prevFull: m.sessions.prev_full, fmt: num });
+  return rows;
+}
+
+function CalendarCost({ clients }: { clients: ExecClient[] }) {
+  const withCal = clients.filter((c) => c.calendar);
+  const rows = withCal
+    .filter((c) => c.calendar!.blocked_past + c.calendar!.blocked_ahead + c.calendar!.restricted_past + c.calendar!.restricted_ahead > 0)
+    .sort((a, b) =>
+      (b.calendar!.blocked_past + b.calendar!.blocked_ahead) - (a.calendar!.blocked_past + a.calendar!.blocked_ahead) ||
+      (b.calendar!.restricted_past + b.calendar!.restricted_ahead) - (a.calendar!.restricted_past + a.calendar!.restricted_ahead));
+  if (rows.length === 0) return <p className="text-sm text-gray-500 dark:text-gray-400">Ningún cliente tiene días con deploy bloqueado o restringido este mes.</p>;
+  const total = withCal.reduce((a, c) => a + c.calendar!.days_in_month, 0);
+  const blocked = withCal.reduce((a, c) => a + c.calendar!.blocked_past + c.calendar!.blocked_ahead, 0);
+  return (
+    <div>
+      <p className="text-sm text-gray-600 dark:text-gray-300 mb-3">
+        <b className="font-medium text-gray-900 dark:text-white">{pctFmt(total ? blocked / total : null, 0)}</b> de los días-cliente del mes tienen el deploy bloqueado.
+      </p>
+      <div className="overflow-x-auto -mx-5 px-5">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-left text-xs text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-navy-700">
+              <th className="py-2 pr-4 font-medium">Cliente</th>
+              <th className="py-2 pr-4 font-medium text-right">Bloqueados</th>
+              <th className="py-2 pr-4 font-medium text-right">Restringidos</th>
+              <th className="py-2 font-medium text-right">Por venir</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((c) => {
+              const k = c.calendar!;
+              return (
+                <tr key={c.client_id} className="border-b border-gray-100 dark:border-navy-700/60 last:border-0">
+                  <td className="py-2 pr-4 text-gray-900 dark:text-white">{c.client_name}</td>
+                  <td className="py-2 pr-4 text-right tabular-nums text-gray-700 dark:text-gray-300">{k.blocked_past + k.blocked_ahead}</td>
+                  <td className="py-2 pr-4 text-right tabular-nums text-gray-700 dark:text-gray-300">{k.restricted_past + k.restricted_ahead}</td>
+                  <td className="py-2 text-right tabular-nums text-gray-500 dark:text-gray-400">{k.blocked_ahead + k.restricted_ahead}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
 }
 
 export default function ExecutivePage() {
@@ -115,6 +196,10 @@ export default function ExecutivePage() {
   const failing = data?.clients.filter((c) => c.error) ?? [];
   const noEcom = data?.clients.filter((c) => c.kpis && c.kpis.conversion_key === "conversions") ?? [];
   const stale = data?.clients.filter((c) => c.stale) ?? [];
+  const cfBots = (data?.clients ?? [])
+    .filter((c) => c.cloudflare?.bot_share != null && c.cloudflare.requests > 0)
+    .sort((a, b) => b.cloudflare!.bot_share! - a.cloudflare!.bot_share!)
+    .slice(0, 6);
 
   return (
     <AuthGuard>
@@ -147,15 +232,37 @@ export default function ExecutivePage() {
                 value={eco.revenue[0] ? money(eco.revenue[0].cur, eco.revenue[0].currency) : "—"}
                 delta={change(eco.revenue[0])}
                 hint={eco.revenue[0] ? `${eco.revenue[0].clients} cliente${eco.revenue[0].clients > 1 ? "s" : ""} en ${eco.revenue[0].currency}` : "Ningún cliente informa ingresos en GA4"}
-                extra={eco.revenue.length > 1 && (
-                  <ul className="mt-2 space-y-0.5 text-xs text-gray-600 dark:text-gray-300">
-                    {eco.revenue.slice(1).map((r) => (
-                      <li key={r.currency} className="flex justify-between gap-2 tabular-nums">
-                        <span>{money(r.cur, r.currency)}</span><Delta value={change(r)} />
-                      </li>
-                    ))}
-                  </ul>
-                )}
+                extra={
+                  <>
+                    {eco.revenue.length > 1 && (
+                      <ul className="mt-2 space-y-0.5 text-xs text-gray-600 dark:text-gray-300">
+                        {eco.revenue.slice(1).map((r) => (
+                          <li key={r.currency} className="flex justify-between gap-2 tabular-nums">
+                            <span>{money(r.cur, r.currency)}</span><Delta value={change(r)} />
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    {eco.revenue[0] && (
+                      <dl className="mt-3 pt-3 border-t border-gray-100 dark:border-navy-700 grid grid-cols-2 gap-2 text-xs">
+                        <div>
+                          <dt className="text-gray-500 dark:text-gray-400">Ticket promedio</dt>
+                          <dd className="tabular-nums text-gray-900 dark:text-white font-medium">
+                            {eco.revenue[0].avg_order_value.cur != null ? money(eco.revenue[0].avg_order_value.cur, eco.revenue[0].currency, true) : "—"}{" "}
+                            <Delta value={change(eco.revenue[0].avg_order_value)} />
+                          </dd>
+                        </div>
+                        <div>
+                          <dt className="text-gray-500 dark:text-gray-400">Ingreso por sesión</dt>
+                          <dd className="tabular-nums text-gray-900 dark:text-white font-medium">
+                            {eco.revenue[0].revenue_per_session.cur != null ? money(eco.revenue[0].revenue_per_session.cur, eco.revenue[0].currency, true) : "—"}{" "}
+                            <Delta value={change(eco.revenue[0].revenue_per_session)} />
+                          </dd>
+                        </div>
+                      </dl>
+                    )}
+                  </>
+                }
               />
               <KpiTile
                 label="Compras"
@@ -177,6 +284,13 @@ export default function ExecutivePage() {
               />
             </div>
 
+            {/* Month to date */}
+            {data.mtd && (
+              <Section title="Mes en curso" subtitle={`${monthName(data.mtd.month)} hasta ${dataThrough ? `el ${shortDate(dataThrough)}` : "ayer"}, vs. los mismos días del mes anterior`}>
+                <MtdTable elapsed={data.mtd.days_elapsed} total={data.mtd.days_in_month} rows={mtdRows(data.mtd)} />
+              </Section>
+            )}
+
             {/* Highlights */}
             {highlights(data).length > 0 && (
               <Section title="Lo más importante de la semana">
@@ -196,7 +310,7 @@ export default function ExecutivePage() {
             {/* Clients table */}
             <Section title="Clientes" subtitle="Hacé clic en un cliente para ver el detalle. Tendencia: últimos 28 días, en azul la semana actual.">
               <div className="overflow-x-auto -mx-5">
-                <table className="w-full text-sm min-w-[860px]">
+                <table className="w-full text-sm min-w-[1040px]">
                   <thead>
                     <tr className="text-xs text-gray-500 dark:text-gray-400 border-b border-gray-200 dark:border-navy-700">
                       <th className="py-2.5 pl-5 pr-3 font-medium text-left">
@@ -208,9 +322,11 @@ export default function ExecutivePage() {
                       {th("conv", "Compras / conv.")}
                       {th("conv_d", "Δ")}
                       {th("rate", "Tasa")}
+                      {th("aov", "Ticket")}
                       <th className="py-2.5 px-3 font-medium text-right">Ingresos</th>
                       {th("revenue_d", "Δ")}
                       <th className="py-2.5 px-3 font-medium text-left">Tendencia</th>
+                      {th("blocked", "Días bloq.")}
                       <th className="py-2.5 pl-3 pr-5 font-medium text-left">Promo hoy</th>
                     </tr>
                   </thead>
@@ -229,7 +345,7 @@ export default function ExecutivePage() {
                             </Link>
                           </td>
                           {!k ? (
-                            <td colSpan={8} className="py-2.5 px-3 text-xs text-gray-500 dark:text-gray-400">
+                            <td colSpan={9} className="py-2.5 px-3 text-xs text-gray-500 dark:text-gray-400">
                               {c.error ?? (c.ga4_configured ? "Sin datos" : "Sin propiedad GA4 configurada")}
                             </td>
                           ) : (
@@ -242,6 +358,9 @@ export default function ExecutivePage() {
                               </td>
                               <td className="py-2.5 px-3 text-right"><Delta value={change(k.conversions)} /></td>
                               <td className="py-2.5 px-3 text-right tabular-nums text-gray-700 dark:text-gray-300">{pctFmt(k.conversion_rate.cur, 2)}</td>
+                              <td className="py-2.5 px-3 text-right tabular-nums text-gray-700 dark:text-gray-300 whitespace-nowrap">
+                                {k.avg_order_value?.cur != null ? money(k.avg_order_value.cur, c.currency) : <span className="text-ink-3">—</span>}
+                              </td>
                               <td className="py-2.5 px-3 text-right tabular-nums text-gray-900 dark:text-white whitespace-nowrap">
                                 {k.revenue ? money(k.revenue.cur, c.currency) : <span className="text-ink-3">—</span>}
                               </td>
@@ -249,6 +368,11 @@ export default function ExecutivePage() {
                               <td className="py-2.5 px-3"><Sparkline series={c.series} metric={k.conversion_key} /></td>
                             </>
                           )}
+                          <td className="py-2.5 px-3 text-right tabular-nums text-gray-700 dark:text-gray-300" title={c.calendar ? calendarSummary(c.calendar) : undefined}>
+                            {c.calendar
+                              ? <>{c.calendar.blocked_past + c.calendar.blocked_ahead}<span className="text-ink-3"> / {c.calendar.days_in_month}</span></>
+                              : <span className="text-ink-3">—</span>}
+                          </td>
                           <td className="py-2.5 pl-3 pr-5 text-xs">
                             {c.active_promos.length
                               ? <span className="inline-block max-w-[160px] truncate rounded-full bg-series/10 text-series px-2 py-0.5 font-medium" title={c.active_promos.map((p) => p.description).join(", ")}>
@@ -275,6 +399,51 @@ export default function ExecutivePage() {
                   <Upcoming items={data.upcoming} />
                 </Section>
               </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <Section title="Ranking de promociones por tipo" subtitle={`Todas las promos medibles de los últimos ${data.history_days} días`}>
+                <PromoRanking rows={data.promo_ranking} days={data.history_days} />
+              </Section>
+              <Section title="Las que más rindieron" subtitle={`Mayor suba de conversiones por día, últimos ${data.history_days} días`}>
+                <PromoResults rows={data.best_promos} showClient emptyText="Todavía no hay promociones medibles." />
+                {data.worst_promos.length > 0 && (
+                  <>
+                    <h3 className="mt-6 mb-2 text-sm font-semibold text-gray-900 dark:text-white">Las que no movieron la aguja</h3>
+                    <PromoResults rows={data.worst_promos} showClient />
+                  </>
+                )}
+              </Section>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              <Section title="Calidad del tráfico por campaña" subtitle="Últimos 7 días. Sesiones casi sin interacción ni conversiones suelen ser bots o tráfico pago de baja calidad.">
+                {data.suspicious_campaigns.length === 0 ? (
+                  <p className="text-sm text-gray-500 dark:text-gray-400">No se detectaron campañas con tráfico de baja calidad.</p>
+                ) : (
+                  <ul className="divide-y divide-gray-100 dark:divide-navy-700/60 text-sm">
+                    {data.suspicious_campaigns.map((s, i) => (
+                      <li key={i} className="py-2.5">
+                        <div className="flex justify-between gap-3">
+                          <span className="min-w-0 text-gray-900 dark:text-white">
+                            <span className="font-medium">{s.client_name}</span> · {s.campaign}<QualityBadge q={s.quality} />
+                            <span className="block text-xs text-gray-500 dark:text-gray-400">{s.source_medium} · {s.quality?.reasons.join(" · ")}</span>
+                          </span>
+                          <span className="shrink-0 tabular-nums text-gray-700 dark:text-gray-300">{num(s.sessions)} ses.</span>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {cfBots.length > 0 && (
+                  <p className="mt-4 text-xs text-gray-500 dark:text-gray-400">
+                    Cloudflare ahora (últimos 15 min), % de requests de bots: {cfBots.map((c) => `${c.client_name} ${pctFmt(c.cloudflare!.bot_share, 0)}`).join(" · ")}
+                  </p>
+                )}
+              </Section>
+              <Section title="Costo operativo del calendario" subtitle="Días de este mes con deploy bloqueado o restringido por promociones (incluye clientes que comparten repositorio)">
+                <CalendarCost clients={data.clients} />
+              </Section>
             </div>
 
             {(missing.length > 0 || failing.length > 0 || noEcom.length > 0 || stale.length > 0) && (

@@ -15,6 +15,7 @@ import {
   getRepositories, createRepository, deleteRepository, addClientToRepository, removeClientFromRepository,
   getTeams, createTeam, updateTeam, deleteTeam, addTeamChannel, removeTeamChannel,
   addTeamSlot, updateTeamSlot, deleteTeamSlot, testTeamNotify,
+  getExecDigestConfig, saveExecDigestConfig, testExecDigest, previewExecDigest, type ExecDigestConfig,
   extractError,
   type NotificationConfig, type GA4RealtimeData, type GA4CredentialsStatus,
   type CloudflareCredentialsStatus, type CloudflareZone, type CloudflareTraffic,
@@ -557,7 +558,103 @@ function NotificationsTab() {
         </div>
       </form>
 
+      <ExecDigestCard />
     </div>
+  );
+}
+
+const WEEKDAYS = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"];
+
+function ExecDigestCard() {
+  const [cfg, setCfg] = useState<ExecDigestConfig | null>(null);
+  const [busy, setBusy] = useState<"" | "save" | "test" | "preview">("");
+  const [msg, setMsg] = useState("");
+  const [error, setError] = useState("");
+  const [preview, setPreview] = useState<string | null>(null);
+
+  useEffect(() => {
+    getExecDigestConfig().then(setCfg)
+      .catch(() => setCfg({ enabled: false, webhook_url: "", weekday: 0, time: "12:00", base_url: "" }));
+  }, []);
+
+  async function run(kind: "save" | "test" | "preview") {
+    if (!cfg) return;
+    setBusy(kind); setError(""); setMsg("");
+    try {
+      if (kind === "save") {
+        setCfg(await saveExecDigestConfig({ ...cfg, webhook_url: cfg.webhook_url || null, base_url: cfg.base_url || null }));
+        setMsg("Configuración guardada ✅");
+      } else if (kind === "test") {
+        await testExecDigest();
+        setMsg("Resumen enviado ✅");
+      } else {
+        setPreview(await previewExecDigest());
+      }
+    } catch (err: any) { setError(extractError(err)); }
+    finally { setBusy(""); setTimeout(() => setMsg(""), 4000); }
+  }
+
+  if (!cfg) return null;
+  const btn2 = "px-5 py-2.5 rounded-xl border border-gray-200 dark:border-navy-700 text-sm font-semibold text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-navy-700 transition disabled:opacity-50";
+
+  return (
+    <form onSubmit={e => { e.preventDefault(); run("save"); }} className="card p-6 space-y-5">
+      <div>
+        <h2 className="font-semibold text-gray-900 dark:text-white">Resumen semanal para dirección (CMO)</h2>
+        <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+          Envía una vez por semana los KPIs de los últimos 7 días, el mes en curso, las alertas (caídas de 20% o más), campañas sospechosas y las próximas promos. Usa el mismo cálculo que /executive.
+        </p>
+      </div>
+
+      <div>
+        <label className="field-label">URL del Webhook de Google Chat</label>
+        <input className="field" type="url" placeholder="https://chat.googleapis.com/v1/spaces/.../messages?key=..."
+          value={cfg.webhook_url ?? ""} onChange={e => setCfg({ ...cfg, webhook_url: e.target.value })} />
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div>
+          <label className="field-label">Día</label>
+          <select className="field" value={cfg.weekday} onChange={e => setCfg({ ...cfg, weekday: Number(e.target.value) })}>
+            {WEEKDAYS.map((d, i) => <option key={d} value={i}>{d}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="field-label">Hora (UTC)</label>
+          <input className="field" type="time" value={cfg.time} onChange={e => setCfg({ ...cfg, time: e.target.value })} />
+        </div>
+        <div>
+          <label className="field-label">URL del sitio (para el link)</label>
+          <input className="field" type="url" placeholder="https://deploy.midominio.com"
+            value={cfg.base_url ?? ""} onChange={e => setCfg({ ...cfg, base_url: e.target.value })} />
+        </div>
+      </div>
+
+      <div className="flex items-center gap-3">
+        <button type="button" onClick={() => setCfg({ ...cfg, enabled: !cfg.enabled })}
+          className={`relative w-11 h-6 rounded-full transition-colors ${cfg.enabled ? "bg-green-500" : "bg-gray-300 dark:bg-gray-600"}`}>
+          <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${cfg.enabled ? "translate-x-5" : ""}`} />
+        </button>
+        <span className="text-sm text-gray-600 dark:text-gray-300">{cfg.enabled ? "Resumen semanal activo" : "Resumen semanal desactivado"}</span>
+      </div>
+
+      {error && <p className="text-red-500 text-sm">{error}</p>}
+      {msg && <p className="text-green-500 text-sm">{msg}</p>}
+
+      <div className="flex gap-3 flex-wrap">
+        <button type="submit" disabled={!!busy} className="btn-primary">{busy === "save" ? "Guardando..." : "Guardar"}</button>
+        <button type="button" disabled={!!busy || !cfg.webhook_url} onClick={() => run("test")} className={btn2}>
+          {busy === "test" ? "Enviando..." : "📨 Enviar ahora"}
+        </button>
+        <button type="button" disabled={!!busy} onClick={() => run("preview")} className={btn2}>
+          {busy === "preview" ? "Generando..." : "👁 Vista previa"}
+        </button>
+      </div>
+
+      {preview != null && (
+        <pre className="whitespace-pre-wrap text-xs bg-gray-50 dark:bg-navy-900 border border-gray-200 dark:border-navy-700 rounded-xl p-4 text-gray-700 dark:text-gray-300 max-h-96 overflow-y-auto">{preview}</pre>
+      )}
+    </form>
   );
 }
 

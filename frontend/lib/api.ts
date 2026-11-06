@@ -518,6 +518,7 @@ export interface ExecKpis {
   revenue: ExecPair | null;
   conversion_rate: ExecPairN;
   avg_order_value: ExecPairN | null;
+  revenue_per_session: ExecPairN | null;
 }
 
 export interface ExecPromo {
@@ -542,6 +543,65 @@ export interface ExecPromoResult extends ExecPromo {
 
 export interface ExecBreakdownRow { sessions: number; conversions: number; purchases: number; revenue: number }
 
+export interface ExecQuality {
+  engagement_rate: number | null;
+  seconds_per_session: number | null;
+  score: number;
+  level: "ok" | "possible" | "likely" | "insufficient";
+  reasons: string[];
+}
+
+export interface ExecEngagedRow extends ExecBreakdownRow {
+  engaged_sessions: number;
+  engagement_seconds: number;
+  quality?: ExecQuality;
+}
+
+export interface ExecSegment extends ExecEngagedRow {
+  segment: string;
+  share: number | null;
+  conversion_rate: number | null;
+  engagement_rate: number | null;
+}
+
+export interface ExecFunnel {
+  steps: { event: string; label: string; count: number; from_prev: number | null }[];
+  cart_abandonment: number | null;
+  view_to_purchase: number | null;
+}
+
+export interface ExecItem { item: string; revenue: number; quantity: number; views: number }
+
+export interface ExecRanking {
+  promo_type: ExecPromo["promo_type"];
+  count: number;
+  avg_conversion_lift: number | null;
+  avg_revenue_lift: number | null;
+  win_rate: number | null;
+}
+
+type ExecTotals = { sessions: number; conversions: number; purchases: number; revenue: number };
+
+export interface ExecMtd {
+  month: string;
+  days_elapsed: number;
+  days_in_month: number;
+  cur: ExecTotals;
+  prev: ExecTotals;
+  prev_full: ExecTotals;
+  projection: ExecTotals;
+}
+
+export interface ExecCalendar {
+  blocked_past: number;
+  blocked_ahead: number;
+  restricted_past: number;
+  restricted_ahead: number;
+  days_in_month: number;
+}
+
+type ExecMtdPeriods = { cur: number; prev: number; projection: number; prev_full: number };
+
 export interface ExecClient {
   client_id: number;
   client_name: string;
@@ -552,14 +612,25 @@ export interface ExecClient {
   currency: string | null;
   kpis: ExecKpis | null;
   series: ExecDay[];
-  channels: (ExecBreakdownRow & { channel: string })[];
-  campaigns: (ExecBreakdownRow & { campaign: string; source_medium: string })[];
+  channels: (ExecEngagedRow & { channel: string })[];
+  campaigns: (ExecEngagedRow & { campaign: string; source_medium: string })[];
+  devices: ExecSegment[];
+  new_vs_returning: ExecSegment[];
+  funnel: ExecFunnel | null;
+  items: ExecItem[];
   active_promos: ExecPromo[];
   promo_results: ExecPromoResult[];
+  promo_history: ExecPromoResult[];
+  promo_ranking: ExecRanking[];
+  mtd: ExecMtd | null;
+  calendar: ExecCalendar | null;
+  cloudflare: { requests: number; bot_requests: number; bot_share: number | null; window_minutes: number } | null;
   stale: boolean;
   error: string | null;
   data_through?: string;
 }
+
+export type ExecRankedPromo = ExecPromoResult & { client_id: number; client_name: string };
 
 export interface ExecOverview {
   generated_at: string;
@@ -571,12 +642,55 @@ export interface ExecOverview {
     sessions: ExecPair;
     purchases: ExecPair;
     purchase_rate: ExecPairN;
-    revenue: (ExecPair & { currency: string; clients: number })[];
+    revenue: (ExecPair & {
+      currency: string;
+      clients: number;
+      avg_order_value: ExecPairN;
+      revenue_per_session: ExecPairN;
+    })[];
   };
+  mtd: {
+    month: string;
+    days_elapsed: number;
+    days_in_month: number;
+    sessions: ExecMtdPeriods;
+    purchases: ExecMtdPeriods;
+    revenue: (ExecMtdPeriods & { currency: string })[];
+  } | null;
+  history_days: number;
+  promo_ranking: ExecRanking[];
+  best_promos: ExecRankedPromo[];
+  worst_promos: ExecRankedPromo[];
+  alerts: { client_id: number; client_name: string; metric: string; label: string; change: number }[];
+  suspicious_campaigns: (ExecEngagedRow & { client_id: number; client_name: string; campaign: string; source_medium: string })[];
   clients: ExecClient[];
   upcoming: (ExecPromo & { client_id: number; client_name: string })[];
 }
 
 export async function getExecutiveOverview(): Promise<ExecOverview> {
   return (await api.get<ExecOverview>("/executive/overview")).data;
+}
+
+export interface ExecDigestConfig {
+  enabled: boolean;
+  webhook_url: string | null;
+  weekday: number;
+  time: string;
+  base_url: string | null;
+}
+
+export async function getExecDigestConfig(): Promise<ExecDigestConfig> {
+  return (await api.get<ExecDigestConfig>("/executive/digest/config")).data;
+}
+
+export async function saveExecDigestConfig(cfg: ExecDigestConfig): Promise<ExecDigestConfig> {
+  return (await api.post<ExecDigestConfig>("/executive/digest/config", cfg)).data;
+}
+
+export async function testExecDigest(): Promise<void> {
+  await api.post("/executive/digest/test");
+}
+
+export async function previewExecDigest(): Promise<string> {
+  return (await api.get<{ text: string }>("/executive/digest/preview")).data.text;
 }

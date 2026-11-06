@@ -6,12 +6,23 @@ import { useEffect, useState } from "react";
 import AuthGuard from "@/components/AuthGuard";
 import { clientSlug } from "@/components/landing/parts";
 import {
-  DailyBars, ExecLogo, KpiTile, PROMO_TYPE, PromoResults, Section,
-  change, convLabel, money, num, pctFmt, range, shortDate,
+  DailyBars, ExecLogo, Funnel, KpiTile, MtdTable, PROMO_TYPE, PromoRanking, PromoResults, QualityBadge, Section,
+  SegmentTable, TopItems, calendarSummary, change, convLabel, money, num, pctFmt, range, shortDate, type MtdRow,
 } from "@/components/executive/parts";
-import { extractError, getExecutiveOverview, type ExecBreakdownRow, type ExecClient, type ExecOverview } from "@/lib/api";
+import { extractError, getExecutiveOverview, type ExecClient, type ExecEngagedRow, type ExecOverview } from "@/lib/api";
 
-function Breakdown<R extends ExecBreakdownRow>({ client, rows, label, name }: {
+function clientMtdRows(c: ExecClient): MtdRow[] {
+  const m = c.mtd!, k = c.kpis!;
+  const row = (label: string, key: "sessions" | "purchases" | "conversions" | "revenue", fmt: (v: number) => string): MtdRow =>
+    ({ label, cur: m.cur[key], prev: m.prev[key], projection: m.projection[key], prevFull: m.prev_full[key], fmt });
+  const rows: MtdRow[] = [];
+  if (k.has_revenue) rows.push(row("Ingresos", "revenue", (v) => money(v, c.currency)));
+  rows.push(row(convLabel(c), k.conversion_key, num));
+  rows.push(row("Sesiones", "sessions", num));
+  return rows;
+}
+
+function Breakdown<R extends ExecEngagedRow>({ client, rows, label, name }: {
   client: ExecClient;
   rows: R[];
   label: string;
@@ -36,7 +47,7 @@ function Breakdown<R extends ExecBreakdownRow>({ client, rows, label, name }: {
           {rows.map((r, i) => (
             <tr key={i} className="border-b border-gray-100 dark:border-navy-700/60 last:border-0">
               <td className="py-2.5 pr-4">
-                <div className="text-gray-900 dark:text-white">{name(r)}</div>
+                <div className="text-gray-900 dark:text-white">{name(r)}<QualityBadge q={r.quality} /></div>
                 {/* share-of-sessions bar: one hue, magnitude only */}
                 <div className="mt-1 h-1 rounded-full bg-gray-100 dark:bg-navy-700 overflow-hidden" aria-hidden>
                   <div className="h-full rounded-full bg-series" style={{ width: `${(r.sessions / total) * 100}%` }} />
@@ -126,6 +137,34 @@ export default function ExecutiveClientPage() {
                       : null}
                 </div>
 
+                {(k.revenue_per_session || client.calendar) && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                    {k.revenue_per_session && (
+                      <KpiTile label="Ingreso por sesión" value={money(k.revenue_per_session.cur ?? 0, client.currency, true)}
+                               delta={change(k.revenue_per_session)} hint="Ingresos / sesiones: combina tráfico, conversión y ticket" />
+                    )}
+                    {k.revenue && k.avg_order_value && (
+                      <KpiTile label="Sesiones" value={num(k.sessions.cur)} delta={change(k.sessions)} />
+                    )}
+                    {client.calendar && (
+                      <div className="card p-5 sm:col-span-2">
+                        <p className="text-sm text-gray-500 dark:text-gray-400">Deploys este mes</p>
+                        <p className="mt-1 text-3xl font-semibold tracking-tight text-gray-900 dark:text-white tabular-nums">
+                          {client.calendar.blocked_past + client.calendar.blocked_ahead}
+                          <span className="text-base font-normal text-gray-500 dark:text-gray-400"> días bloqueados · {client.calendar.restricted_past + client.calendar.restricted_ahead} restringidos</span>
+                        </p>
+                        <p className="mt-1.5 text-sm text-gray-500 dark:text-gray-400">{calendarSummary(client.calendar)}</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {client.mtd && (
+                  <Section title="Mes en curso" subtitle="Vs. los mismos días del mes anterior">
+                    <MtdTable elapsed={client.mtd.days_elapsed} total={client.mtd.days_in_month} rows={clientMtdRows(client)} />
+                  </Section>
+                )}
+
                 <div className="space-y-4">
                   <div className="flex items-center justify-between">
                     <h2 className="font-semibold text-gray-900 dark:text-white">Últimos 28 días</h2>
@@ -191,8 +230,42 @@ export default function ExecutiveClientPage() {
                         <span className="block text-xs text-gray-500 dark:text-gray-400">{r.source_medium}</span>
                       </>
                     )} />
+                    {client.cloudflare?.bot_share != null && client.cloudflare.requests > 0 && (
+                      <p className="mt-3 text-xs text-gray-500 dark:text-gray-400">
+                        Cloudflare ahora (últimos {client.cloudflare.window_minutes} min): {pctFmt(client.cloudflare.bot_share, 0)} de {num(client.cloudflare.requests)} requests son de bots.
+                      </p>
+                    )}
                   </Section>
                 </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  <Section title="Dispositivos" subtitle="Últimos 7 días">
+                    <SegmentTable client={client} rows={client.devices} label="Dispositivo" />
+                  </Section>
+                  <Section title="Nuevos vs. recurrentes" subtitle="Últimos 7 días">
+                    <SegmentTable client={client} rows={client.new_vs_returning} label="Usuarios" />
+                  </Section>
+                </div>
+
+                {k.conversion_key === "purchases" && (
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <Section title="Embudo de compra" subtitle="Últimos 7 días">
+                      <Funnel funnel={client.funnel} />
+                    </Section>
+                    <Section title="Productos más vendidos" subtitle="Últimos 7 días, por ingresos">
+                      <TopItems items={client.items} currency={client.currency} />
+                    </Section>
+                  </div>
+                )}
+
+                <Section title="Historial de promociones" subtitle={`Todas las promos medibles de los últimos ${data?.history_days ?? 138} días`}>
+                  <PromoRanking rows={client.promo_ranking} days={data?.history_days ?? 138} />
+                  {client.promo_history.length > 0 && (
+                    <div className="mt-6">
+                      <PromoResults rows={client.promo_history} />
+                    </div>
+                  )}
+                </Section>
               </>
             )}
 
