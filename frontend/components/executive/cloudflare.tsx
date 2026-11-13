@@ -7,11 +7,12 @@
 // cache = series color, origin = muted ink, legend + table twin, keyboard scrub.
 
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
-import { PAD, Tooltip, ticks, useScrub, useWidth } from "@/components/executive/charts";
+import { PAD, Segmented, Tooltip, ticks, useScrub, useWidth } from "@/components/executive/charts";
 import { num, pctFmt, Section } from "@/components/executive/parts";
 import {
   extractError, getExecutiveCloudflare, getPublicCloudflare,
-  type CfAnalytics, type CfClientRow, type ExecCloudflare,
+  type CfAnalytics, type CfBreakdownName, type CfBreakdownRow, type CfClientRow, type CfMinute,
+  type CfStatusMinute, type ExecCloudflare,
 } from "@/lib/api";
 
 // ── Data hook: fetch now and every minute while the tab is visible ────────────
@@ -119,14 +120,22 @@ function StackKey({ cached }: { cached: boolean }) {
   return <span className={`inline-block h-2.5 w-2.5 rounded-sm ${cached ? "bg-series" : "bg-ink-3/50"}`} aria-hidden />;
 }
 
+type Metric = "requests" | "bytes";
+
 export function LiveChart({ series, label }: { series: CfAnalytics["series"]; label: string }) {
   const [ref, W] = useWidth<HTMLDivElement>();
+  const [metric, setMetric] = useState<Metric>("requests");
   const H = 200;
   const n = series.length;
   const { hover, setHover, focusProps } = useScrub(Math.max(0, n - 1), Math.max(0, n - 1));
   if (n < 2) return <p className={`text-sm ${muted}`}>Todavía no hay suficientes minutos para dibujar la última hora.</p>;
 
-  const max = Math.max(1, ...series.map((p) => p.requests));
+  const hasBytes = series.some((p) => p.cached_bytes != null);
+  const m: Metric = hasBytes ? metric : "requests";
+  const tot = (p: CfMinute) => (m === "bytes" ? p.bytes : p.requests);
+  const cac = (p: CfMinute) => (m === "bytes" ? p.cached_bytes ?? 0 : p.cached);
+  const fmt = m === "bytes" ? fmtBytes : num;
+  const max = Math.max(1, ...series.map(tot));
   const yT = ticks(0, max);
   const top = yT[yT.length - 1];
   const iw = W - PAD.l - PAD.r, ih = H - PAD.t - PAD.b;
@@ -134,14 +143,16 @@ export function LiveChart({ series, label }: { series: CfAnalytics["series"]; la
   const y = (v: number) => PAD.t + ih - (v / top) * ih;
   const line = (get: (p: CfAnalytics["series"][number]) => number) =>
     series.map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(get(p)).toFixed(1)}`).join("");
-  const totalLine = line((p) => p.requests);
-  const cachedLine = line((p) => p.cached);
+  const totalLine = line(tot);
+  const cachedLine = line(cac);
   const base = `L${x(n - 1)},${y(0)}L${x(0)},${y(0)}Z`;
-  const originArea = `${totalLine}${series.slice().reverse().map((p, k) => `L${x(n - 1 - k).toFixed(1)},${y(p.cached).toFixed(1)}`).join("")}Z`;
+  const originArea = `${totalLine}${series.slice().reverse().map((p, k) => `L${x(n - 1 - k).toFixed(1)},${y(cac(p)).toFixed(1)}`).join("")}Z`;
   const xEvery = Math.max(1, Math.round(n / Math.max(2, Math.floor(iw / 90))));
   const h = hover != null ? series[hover] : null;
   const last = series[n - 1];
-  const summary = `${label}: última hora por minuto. Último minuto ${num(last.requests)} requests, ${num(last.cached)} desde caché.`;
+  const summary = m === "bytes"
+    ? `${label}: transferido por minuto en la última hora. Último minuto ${fmtBytes(last.bytes)}, ${fmtBytes(cac(last))} desde caché.`
+    : `${label}: última hora por minuto. Último minuto ${num(last.requests)} requests, ${num(last.cached)} desde caché.`;
 
   const onMove = (e: React.PointerEvent<SVGRectElement>) => {
     const r = e.currentTarget.getBoundingClientRect();
@@ -150,9 +161,15 @@ export function LiveChart({ series, label }: { series: CfAnalytics["series"]; la
 
   return (
     <figure>
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-600 dark:text-gray-300 mb-2">
-        <span className="inline-flex items-center gap-1.5"><StackKey cached /> Desde caché</span>
-        <span className="inline-flex items-center gap-1.5"><StackKey cached={false} /> Al origen</span>
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 mb-2">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-600 dark:text-gray-300">
+          <span className="inline-flex items-center gap-1.5"><StackKey cached /> Desde caché</span>
+          <span className="inline-flex items-center gap-1.5"><StackKey cached={false} /> Al origen</span>
+        </div>
+        {hasBytes && (
+          <Segmented label="Ver" value={metric} onChange={setMetric}
+                     options={[{ value: "requests", label: "Requests" }, { value: "bytes", label: "Transferido" }]} />
+        )}
       </div>
       <div ref={ref} className="relative outline-none focus-visible:ring-2 focus-visible:ring-series/50 rounded-md"
            role="group" aria-label={summary} {...focusProps}>
@@ -160,7 +177,7 @@ export function LiveChart({ series, label }: { series: CfAnalytics["series"]; la
           {yT.map((t) => (
             <g key={t}>
               <line x1={PAD.l} x2={W - PAD.r} y1={y(t)} y2={y(t)} strokeWidth="1" className="stroke-line" />
-              <text x={PAD.l - 8} y={y(t) + 4} textAnchor="end" fontSize="11" className="fill-ink-3 tabular-nums">{num(t)}</text>
+              <text x={PAD.l - 8} y={y(t) + 4} textAnchor="end" fontSize="11" className="fill-ink-3 tabular-nums">{fmt(t)}</text>
             </g>
           ))}
           {series.map((p, i) => i % xEvery === 0 && (
@@ -173,8 +190,8 @@ export function LiveChart({ series, label }: { series: CfAnalytics["series"]; la
           {h && hover != null && (
             <g>
               <line x1={x(hover)} x2={x(hover)} y1={PAD.t} y2={PAD.t + ih} strokeWidth="1" className="stroke-ink-3" />
-              <circle cx={x(hover)} cy={y(h.requests)} r="4" strokeWidth="2" className="fill-ink-3 stroke-card" />
-              <circle cx={x(hover)} cy={y(h.cached)} r="4" strokeWidth="2" className="fill-series stroke-card" />
+              <circle cx={x(hover)} cy={y(tot(h))} r="4" strokeWidth="2" className="fill-ink-3 stroke-card" />
+              <circle cx={x(hover)} cy={y(cac(h))} r="4" strokeWidth="2" className="fill-series stroke-card" />
             </g>
           )}
           <rect x={PAD.l} y={PAD.t} width={iw} height={ih} fill="transparent"
@@ -184,8 +201,8 @@ export function LiveChart({ series, label }: { series: CfAnalytics["series"]; la
           <Tooltip x={x(hover)} width={W}>
             <p className="text-gray-500 dark:text-gray-400 mb-1">{clock(h.t)}</p>
             <p className="tabular-nums"><span className="font-semibold text-gray-900 dark:text-white">{num(h.requests)}</span> <span className={muted}>requests · {fmtBytes(h.bytes)}</span></p>
-            <p className="flex items-center gap-1.5 tabular-nums"><StackKey cached /><span className="font-semibold text-gray-900 dark:text-white">{num(h.cached)}</span><span className={muted}>desde caché</span></p>
-            <p className="flex items-center gap-1.5 tabular-nums"><StackKey cached={false} /><span className="font-semibold text-gray-900 dark:text-white">{num(h.requests - h.cached)}</span><span className={muted}>al origen</span></p>
+            <p className="flex items-center gap-1.5 tabular-nums"><StackKey cached /><span className="font-semibold text-gray-900 dark:text-white">{fmt(cac(h))}</span><span className={muted}>desde caché</span></p>
+            <p className="flex items-center gap-1.5 tabular-nums"><StackKey cached={false} /><span className="font-semibold text-gray-900 dark:text-white">{fmt(tot(h) - cac(h))}</span><span className={muted}>al origen</span></p>
           </Tooltip>
         )}
       </div>
@@ -203,6 +220,216 @@ export function LiveChart({ series, label }: { series: CfAnalytics["series"]; la
         </div>
       </details>
     </figure>
+  );
+}
+
+// ── Errors per minute: 4xx (muted) and 5xx (red), last hour ─────────────────
+
+export function ErrorsChart({ series, label }: { series: CfStatusMinute[]; label: string }) {
+  const [ref, W] = useWidth<HTMLDivElement>();
+  const H = 160;
+  const n = series.length;
+  const { hover, setHover, focusProps } = useScrub(Math.max(0, n - 1), Math.max(0, n - 1));
+  if (n < 2) return <p className={`text-sm ${muted}`}>Todavía no hay suficientes minutos.</p>;
+
+  const max = Math.max(1, ...series.map((p) => Math.max(p["4xx"], p["5xx"])));
+  const yT = ticks(0, max);
+  const top = yT[yT.length - 1];
+  const iw = W - PAD.l - PAD.r, ih = H - PAD.t - PAD.b;
+  const x = (i: number) => PAD.l + (i / (n - 1)) * iw;
+  const y = (v: number) => PAD.t + ih - (v / top) * ih;
+  const line = (k: "4xx" | "5xx") => series.map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(p[k]).toFixed(1)}`).join("");
+  const xEvery = Math.max(1, Math.round(n / Math.max(2, Math.floor(iw / 90))));
+  const h = hover != null ? series[hover] : null;
+  const sum = (k: "4xx" | "5xx") => series.reduce((a, p) => a + p[k], 0);
+  const summary = `${label}: errores por minuto en la última hora. ${num(sum("4xx"))} respuestas 4xx y ${num(sum("5xx"))} respuestas 5xx.`;
+  const onMove = (e: React.PointerEvent<SVGRectElement>) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    setHover(Math.max(0, Math.min(n - 1, Math.round(((e.clientX - r.left) / r.width) * (n - 1)))));
+  };
+  const Key = ({ k }: { k: "4xx" | "5xx" }) => <span className={`inline-block h-0.5 w-3 rounded-full ${k === "5xx" ? "bg-down" : "bg-ink-3"}`} aria-hidden />;
+
+  return (
+    <figure>
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-600 dark:text-gray-300 mb-2">
+        <span className="inline-flex items-center gap-1.5"><Key k="5xx" /> 5xx, falla del servidor ({num(sum("5xx"))})</span>
+        <span className="inline-flex items-center gap-1.5"><Key k="4xx" /> 4xx, pedido inválido o no encontrado ({num(sum("4xx"))})</span>
+      </div>
+      <div ref={ref} className="relative outline-none focus-visible:ring-2 focus-visible:ring-series/50 rounded-md"
+           role="group" aria-label={summary} {...focusProps}>
+        <svg width={W} height={H} aria-hidden className="block">
+          {yT.map((t) => (
+            <g key={t}>
+              <line x1={PAD.l} x2={W - PAD.r} y1={y(t)} y2={y(t)} strokeWidth="1" className="stroke-line" />
+              <text x={PAD.l - 8} y={y(t) + 4} textAnchor="end" fontSize="11" className="fill-ink-3 tabular-nums">{num(t)}</text>
+            </g>
+          ))}
+          {series.map((p, i) => i % xEvery === 0 && (
+            <text key={p.t} x={x(i)} y={H - 8} textAnchor="middle" fontSize="11" className="fill-ink-3 tabular-nums">{clock(p.t)}</text>
+          ))}
+          <path d={line("4xx")} fill="none" strokeWidth="2" className="stroke-ink-3" strokeLinejoin="round" />
+          <path d={line("5xx")} fill="none" strokeWidth="2" className="stroke-down" strokeLinejoin="round" />
+          {h && hover != null && (
+            <g>
+              <line x1={x(hover)} x2={x(hover)} y1={PAD.t} y2={PAD.t + ih} strokeWidth="1" className="stroke-ink-3" />
+              <circle cx={x(hover)} cy={y(h["4xx"])} r="4" strokeWidth="2" className="fill-ink-3 stroke-card" />
+              <circle cx={x(hover)} cy={y(h["5xx"])} r="4" strokeWidth="2" className="fill-down stroke-card" />
+            </g>
+          )}
+          <rect x={PAD.l} y={PAD.t} width={iw} height={ih} fill="transparent"
+                onPointerMove={onMove} onPointerLeave={() => setHover(null)} />
+        </svg>
+        {h && hover != null && (
+          <Tooltip x={x(hover)} width={W}>
+            <p className="text-gray-500 dark:text-gray-400 mb-1">{clock(h.t)} · {num(h["2xx"] + h["3xx"] + h["4xx"] + h["5xx"])} requests</p>
+            <p className="flex items-center gap-1.5 tabular-nums"><Key k="5xx" /><span className="font-semibold text-gray-900 dark:text-white">{num(h["5xx"])}</span><span className={muted}>5xx</span></p>
+            <p className="flex items-center gap-1.5 tabular-nums"><Key k="4xx" /><span className="font-semibold text-gray-900 dark:text-white">{num(h["4xx"])}</span><span className={muted}>4xx</span></p>
+          </Tooltip>
+        )}
+      </div>
+      <details className="mt-2 text-sm print:hidden">
+        <summary className={`cursor-pointer ${muted}`}>Ver respuestas por minuto</summary>
+        <div className="max-h-64 overflow-auto mt-2">
+          <table className="w-full text-left">
+            <thead><tr><th className={thCls}>Minuto</th><th className={`${thCls} text-right`}>2xx</th><th className={`${thCls} text-right`}>3xx</th><th className={`${thCls} text-right`}>4xx</th><th className={`${thCls} text-right`}>5xx</th></tr></thead>
+            <tbody>
+              {series.slice().reverse().map((p) => (
+                <tr key={p.t}><td className="py-1 pr-4 tabular-nums">{clock(p.t)}</td><td className={tdNum}>{num(p["2xx"])}</td><td className={tdNum}>{num(p["3xx"])}</td><td className={tdNum}>{num(p["4xx"])}</td><td className={tdNum}>{num(p["5xx"])}</td></tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </details>
+    </figure>
+  );
+}
+
+// ── Breakdowns: who asks (country, device, browser…) and what they get ─────
+
+const regionNames = (() => {
+  try { return new Intl.DisplayNames(["es"], { type: "region" }); } catch { return null; }
+})();
+const DEVICE: Record<string, string> = { desktop: "Escritorio", mobile: "Celular", tablet: "Tablet" };
+const STATUS_TEXT: Record<string, string> = {
+  "200": "OK", "204": "Sin contenido", "301": "Redirección permanente", "302": "Redirección", "304": "Sin cambios (caché del navegador)",
+  "400": "Pedido inválido", "401": "Sin autenticar", "403": "Prohibido", "404": "No encontrado", "405": "Método no permitido",
+  "429": "Demasiados pedidos", "499": "El cliente cortó", "500": "Error del servidor", "502": "Bad gateway",
+  "503": "Servicio no disponible", "504": "Timeout del origen", "520": "Error desconocido del origen", "521": "Origen caído",
+  "522": "Timeout de conexión", "524": "Timeout del origen",
+};
+
+function breakdownKey(name: CfBreakdownName, k: string): string {
+  if (name === "referers") return k || "(directo o sin referer)";
+  if (!k) return "(desconocido)";
+  if (name === "countries") {
+    if (k === "XX" || k === "T1") return k === "T1" ? "Tor" : "(desconocido)";
+    try { return regionNames?.of(k) ?? k; } catch { return k; }
+  }
+  if (name === "devices") return DEVICE[k] ?? k;
+  if (name === "codes") return STATUS_TEXT[k] ? `${k} · ${STATUS_TEXT[k]}` : k;
+  return k;
+}
+
+export const BREAKDOWN_TITLE: Record<CfBreakdownName, string> = {
+  countries: "Países", devices: "Dispositivos", browsers: "Navegadores", os: "Sistemas operativos",
+  content: "Tipo de contenido", referers: "De dónde vienen", hosts: "Dominios", methods: "Métodos HTTP",
+  protocols: "Protocolo", codes: "Códigos de respuesta",
+};
+const BREAKDOWN_ORDER: CfBreakdownName[] = ["countries", "devices", "referers", "browsers", "os", "content", "codes", "hosts", "methods", "protocols"];
+
+function BreakdownList({ name, rows }: { name: CfBreakdownName; rows: CfBreakdownRow[] }) {
+  const max = Math.max(...rows.map((r) => r.share), 0.0001);
+  const isErr = (k: string) => name === "codes" && Number(k) >= 500;
+  return (
+    <div>
+      <h4 className="text-sm font-semibold text-gray-900 dark:text-white mb-2">{BREAKDOWN_TITLE[name]}</h4>
+      <ul className="space-y-2">
+        {rows.map((r) => (
+          <li key={r.key} title={`${num(r.requests)} requests · ${fmtBytes(r.bytes)}`}>
+            <div className="flex items-baseline justify-between gap-3 text-sm">
+              <span className={`truncate text-gray-700 dark:text-gray-200 ${name === "referers" || name === "hosts" ? "font-mono text-xs" : ""}`}>{breakdownKey(name, r.key)}</span>
+              <span className="tabular-nums text-gray-900 dark:text-white font-medium shrink-0">{pctFmt(r.share, r.share < 0.01 ? 1 : 0)}</span>
+            </div>
+            <div className="mt-1 h-1 rounded-full bg-gray-100 dark:bg-navy-700 overflow-hidden" aria-hidden>
+              {/* Bar length is relative to the top row so short lists stay readable; the % is the share of all requests. */}
+              <div className={`h-full rounded-full ${isErr(r.key) ? "bg-down" : "bg-series"}`} style={{ width: `${(r.share / max) * 100}%` }} />
+            </div>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+export function Breakdowns({ data, skip = [] }: { data?: CfAnalytics["breakdowns"]; skip?: CfBreakdownName[] }) {
+  const names = BREAKDOWN_ORDER.filter((n) => !skip.includes(n) && (data?.[n]?.length ?? 0) > 0
+    // a breakdown with a single value says nothing (e.g. only one host or only GET)
+    && (data![n]!.length > 1 || n === "countries"));
+  if (names.length === 0) return null;
+  return (
+    <div>
+      <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-3">Quién pide y qué recibe <span className={`font-normal ${muted}`}>· % de los requests</span></h3>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-8 gap-y-6">
+        {names.map((n) => <BreakdownList key={n} name={n} rows={data![n]!} />)}
+      </div>
+    </div>
+  );
+}
+
+// ── Requested paths: volume, cache, errors, bytes, with a filter ────────────
+
+function PathsTable({ paths }: { paths: CfAnalytics["top_paths"] }) {
+  const [q, setQ] = useState("");
+  const rows = q ? paths.filter((p) => p.path.toLowerCase().includes(q.toLowerCase())) : paths;
+  const maxReq = Math.max(1, ...paths.map((p) => p.requests));
+  const hasErrors = paths.some((p) => p.errors_4xx != null);
+  return (
+    <div>
+      <div className="flex flex-wrap items-end justify-between gap-3 mb-2">
+        <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Rutas más pedidas <span className={`font-normal ${muted}`}>· top {paths.length}</span></h3>
+        {paths.length > 8 && (
+          <label className="text-xs text-gray-500 dark:text-gray-400 flex items-center gap-2 print:hidden">
+            <span className="sr-only">Filtrar rutas</span>
+            <input type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Filtrar rutas"
+                   className="h-8 w-52 rounded-lg border border-gray-200 dark:border-navy-700 bg-white dark:bg-navy-900 px-2.5 text-sm text-gray-900 dark:text-white placeholder:text-gray-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-series/50" />
+          </label>
+        )}
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm text-left min-w-[680px]">
+          <thead>
+            <tr className="border-b border-gray-100 dark:border-navy-700">
+              <th className={thCls}>Ruta</th>
+              <th className={`${thCls} text-right w-36`}>Requests</th>
+              <th className={`${thCls} text-right w-28`}>Desde caché</th>
+              {hasErrors && <th className={`${thCls} text-right`}>4xx</th>}
+              {hasErrors && <th className={`${thCls} text-right`}>5xx</th>}
+              <th className={`${thCls} text-right`}>Transferido</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((p) => {
+              const hint = p.cached_share < 0.2 && STATIC_RE.test(p.path);
+              const e5 = p.errors_5xx ?? 0, e4 = p.errors_4xx ?? 0;
+              return (
+                <tr key={p.path} className="border-b border-gray-100 dark:border-navy-700/60 last:border-0 align-top">
+                  <td className="py-2 pr-4 max-w-[380px]">
+                    <span className="font-mono text-xs break-all text-gray-700 dark:text-gray-200">{p.path}</span>
+                    {hint && <span className="ml-2 text-[11px] rounded-full border border-gray-200 dark:border-navy-700 px-1.5 py-px text-gray-600 dark:text-gray-300 whitespace-nowrap" title="Es un archivo estático que casi siempre va al origen: probablemente se pueda cachear">podría cachearse</span>}
+                  </td>
+                  <td className={tdNum}>{num(p.requests)}<Bar value={p.requests / maxReq} cached={false} /></td>
+                  <td className={tdNum}>{pctFmt(p.cached_share, 0)}<Bar value={p.cached_share} /></td>
+                  {hasErrors && <td className={tdNum}>{e4 ? <>{num(e4)} <span className={`text-xs ${muted}`}>({pctFmt(e4 / p.requests, 0)})</span></> : "—"}</td>}
+                  {hasErrors && <td className={`${tdNum} ${e5 ? "text-down font-medium" : ""}`}>{e5 ? <>{num(e5)} <span className="text-xs">({pctFmt(e5 / p.requests, 0)})</span></> : "—"}</td>}
+                  <td className={tdNum}>{fmtBytes(p.bytes)}</td>
+                </tr>
+              );
+            })}
+            {rows.length === 0 && <tr><td colSpan={6} className={`py-3 text-sm ${muted}`}>Ninguna ruta coincide con “{q}”.</td></tr>}
+          </tbody>
+        </table>
+      </div>
+    </div>
   );
 }
 
@@ -249,32 +476,14 @@ export function SiteDetail({ d, name }: { d: CfAnalytics; name: string }) {
           )}
         </div>
       </div>
-      {d.top_paths.length > 0 && (
+      {d.status_series && d.status_series.length > 1 && (
         <div>
-          <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-2">Páginas y archivos más pedidos</h3>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm text-left min-w-[520px]">
-              <thead><tr className="border-b border-gray-100 dark:border-navy-700"><th className={thCls}>Ruta</th><th className={`${thCls} text-right`}>Requests</th><th className={`${thCls} text-right`}>Desde caché</th><th className={`${thCls} text-right`}>Transferido</th></tr></thead>
-              <tbody>
-                {d.top_paths.map((p) => {
-                  const hint = p.cached_share < 0.2 && STATIC_RE.test(p.path);
-                  return (
-                    <tr key={p.path} className="border-b border-gray-100 dark:border-navy-700/60 last:border-0">
-                      <td className="py-2 pr-4 max-w-[360px]">
-                        <span className="font-mono text-xs break-all text-gray-700 dark:text-gray-200">{p.path}</span>
-                        {hint && <span className="ml-2 text-[11px] rounded-full border border-gray-200 dark:border-navy-700 px-1.5 py-px text-gray-600 dark:text-gray-300 whitespace-nowrap" title="Es un archivo estático que casi siempre va al origen: probablemente se pueda cachear">podría cachearse</span>}
-                      </td>
-                      <td className={tdNum}>{num(p.requests)}</td>
-                      <td className={tdNum}>{pctFmt(p.cached_share, 0)}<Bar value={p.cached_share} /></td>
-                      <td className={tdNum}>{fmtBytes(p.bytes)}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+          <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-2">Errores por minuto, última hora</h3>
+          <ErrorsChart series={d.status_series} label={name} />
         </div>
       )}
+      {d.top_paths.length > 0 && <PathsTable paths={d.top_paths} />}
+      <Breakdowns data={d.breakdowns} />
     </div>
   );
 }
@@ -343,6 +552,14 @@ export function CloudflareAnalytics({ live, clientId, publicView }: {
             <Fact label="Errores del servidor" value={pctFmt(eco.error_rate, 1)} sub="respuestas 5xx" />
           </dl>
         )}
+        {eco && eco.series && eco.series.length > 1 && (
+          <div>
+            <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-2">Todos los sitios, última hora por minuto</h3>
+            <LiveChart series={eco.series} label="Todos los sitios" />
+          </div>
+        )}
+        {eco && <Breakdowns data={eco.breakdowns} />}
+        <h3 className="text-sm font-semibold text-gray-900 dark:text-white -mb-3">Por sitio <span className={`font-normal ${muted}`}>· tocá un cliente para ver sus rutas, errores y desgloses</span></h3>
         <div className="overflow-x-auto">
           <table className="w-full text-sm text-left min-w-[860px]">
             <thead>

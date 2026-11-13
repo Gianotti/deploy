@@ -677,7 +677,15 @@ export async function getExecutiveOverview(): Promise<ExecOverview> {
 
 // Cloudflare live analytics for /executive (same for every client, GA4 or not)
 export interface CfCacheStatus { status: string; cached: boolean; requests: number; bytes: number }
-export interface CfMinute { t: string; requests: number; cached: number; bytes: number }
+export interface CfMinute { t: string; requests: number; cached: number; bytes: number; cached_bytes?: number }
+export interface CfStatusMinute { t: string; "2xx": number; "3xx": number; "4xx": number; "5xx": number }
+export interface CfBreakdownRow { key: string; requests: number; bytes: number; share: number }
+export type CfBreakdownName =
+  | "countries" | "devices" | "browsers" | "os" | "content" | "referers" | "hosts" | "methods" | "protocols" | "codes";
+export interface CfPath {
+  path: string; requests: number; cached: number; bytes: number; cached_share: number;
+  errors_4xx?: number; errors_5xx?: number;
+}
 export interface CfAnalytics {
   zone: string;
   host: string;
@@ -692,8 +700,11 @@ export interface CfAnalytics {
     origin_requests: number; by_status: CfCacheStatus[];
   };
   health: { status: Record<"2xx" | "3xx" | "4xx" | "5xx", number>; error_rate: number; cached_share: number; origin_ms: number | null };
-  top_paths: { path: string; requests: number; cached: number; bytes: number; cached_share: number }[];
+  top_paths: CfPath[];
   series: CfMinute[];
+  /** Absent when the zone's plan doesn't expose a dimension */
+  breakdowns?: Partial<Record<CfBreakdownName, CfBreakdownRow[]>>;
+  status_series?: CfStatusMinute[] | null;
 }
 export interface CfClientRow {
   client_id: number;
@@ -708,6 +719,8 @@ export interface CfClientRow {
 export interface CfEcosystem {
   sites: number; requests: number; requests_per_min: number; bytes: number; visits: number | null;
   hit_ratio: number; bytes_ratio: number; origin_requests: number; error_rate: number;
+  breakdowns?: Partial<Record<CfBreakdownName, CfBreakdownRow[]>>;
+  series?: CfMinute[];
 }
 export interface ExecCloudflare {
   generated_at: string;
@@ -722,7 +735,7 @@ export async function getExecutiveCloudflare(): Promise<ExecCloudflare> {
   return (await api.get<ExecCloudflare>("/executive/cloudflare")).data;
 }
 
-/** Public copy for /landing: no auth, no paths, no raw error text. */
+/** Public copy for /landing: no auth, id-like path segments masked, no raw error text. */
 export async function getPublicCloudflare(): Promise<ExecCloudflare> {
   return (await api.get<ExecCloudflare>("/public/cloudflare")).data;
 }

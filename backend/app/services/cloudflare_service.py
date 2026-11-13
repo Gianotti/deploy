@@ -10,10 +10,12 @@ bot para /public/status (la landing las muestra para tener visibilidad).
 """
 
 import json
+import re
 import threading
 import time
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 
 API = "https://api.cloudflare.com/client/v4"
@@ -417,9 +419,75 @@ def get_bot_traffic(account_id: str, token: str, site_host: str) -> dict | None:
 
 ANALYTICS_WINDOW = 15
 ANALYTICS_TTL = 60
-TOP_PATHS = 8
+TOP_PATHS = 25
+TOP_BREAKDOWN = 10
 _analytics_cache: dict[tuple[str, str], tuple[float, dict]] = {}
 _no_visits_zones: set[str] = set()   # zonas donde la API no expone sum.visits
+_bad_dims: dict[str, set[str]] = {}  # zona -> desgloses que su plan no expone
+
+# Extra breakdowns (alias -> GraphQL dimension), queried separately so a plan that
+# lacks one of them never breaks the core numbers.
+BREAKDOWNS = {
+    "countries": "clientCountryName",
+    "devices": "clientDeviceType",
+    "browsers": "userAgentBrowser",
+    "os": "userAgentOS",
+    "content": "edgeResponseContentTypeName",
+    "referers": "clientRefererHost",
+    "hosts": "clientRequestHTTPHost",
+    "methods": "clientRequestHTTPMethodName",
+    "protocols": "clientRequestHTTPProtocol",
+    "codes": "edgeResponseStatus",
+}
+STATUS_SERIES = "status_series"   # per-minute response classes over the last hour
+
+
+def _extras_query(names: list[str]) -> str:
+    uses_f60 = STATUS_SERIES in names
+    parts = []
+    for a in names:
+        if a == STATUS_SERIES:
+            parts.append(f"{a}: httpRequestsAdaptiveGroups(limit:3000,orderBy:[datetimeMinute_ASC],filter:$f60)"
+                         "{count dimensions{datetimeMinute edgeResponseStatus}}")
+        else:
+            parts.append(f"{a}: httpRequestsAdaptiveGroups(limit:{TOP_BREAKDOWN * 3},orderBy:[count_DESC],filter:$f)"
+                         f"{{count sum{{edgeResponseBytes}} dimensions{{{BREAKDOWNS[a]}}}}}")
+    decl = "$z:String!" + (",$f:ZoneHttpRequestsAdaptiveGroupsFilter_InputObject!" if len(names) > (1 if uses_f60 else 0) else "")
+    decl += ",$f60:ZoneHttpRequestsAdaptiveGroupsFilter_InputObject!" if uses_f60 else ""
+    return "query(%s){viewer{zones(filter:{zoneTag:$z}){%s}}}" % (decl, " ".join(parts))
+
+
+def summarize_breakdowns(z: dict, total: int) -> dict:
+    """Pure: extra GraphQL aliases -> {breakdowns: {name: [{key, requests, bytes, share}]}, status_series}.
+    `share` is relative to the window's total requests; missing aliases are simply absent."""
+    out: dict[str, list[dict]] = {}
+    for name, dim in BREAKDOWNS.items():
+        if name not in z:
+            continue
+        agg: dict[str, dict] = {}
+        for g in z[name] or []:
+            k = g["dimensions"].get(dim)
+            k = "" if k is None else str(k)
+            e = agg.setdefault(k, {"key": k, "requests": 0, "bytes": 0})
+            e["requests"] += g["count"]
+            e["bytes"] += _bytes(g)
+        top = sorted(agg.values(), key=lambda e: -e["requests"])[:TOP_BREAKDOWN if name != "codes" else 15]
+        for e in top:
+            e["share"] = round(e["requests"] / total, 3) if total else 0.0
+        out[name] = top
+
+    series = None
+    if STATUS_SERIES in z:
+        minutes: dict[str, dict] = {}
+        for g in z[STATUS_SERIES] or []:
+            t = g["dimensions"]["datetimeMinute"]
+            e = minutes.setdefault(t, {"t": t, "2xx": 0, "3xx": 0, "4xx": 0, "5xx": 0})
+            b = f"{(g['dimensions'].get('edgeResponseStatus') or 0) // 100}xx"
+            if b in e:
+                e[b] += g["count"]
+        series = [minutes[k] for k in sorted(minutes)]
+        series = series[1:-1] if len(series) > 2 else series
+    return {"breakdowns": out, "status_series": series}
 
 _ANALYTICS_QUERY = """query($z:String!,$f:ZoneHttpRequestsAdaptiveGroupsFilter_InputObject!,
  $f60:ZoneHttpRequestsAdaptiveGroupsFilter_InputObject!){
@@ -427,8 +495,8 @@ _ANALYTICS_QUERY = """query($z:String!,$f:ZoneHttpRequestsAdaptiveGroupsFilter_I
   total: httpRequestsAdaptiveGroups(limit:1,filter:$f){count sum{edgeResponseBytes%s} avg{originResponseDurationMs}}
   cache: httpRequestsAdaptiveGroups(limit:30,filter:$f){count sum{edgeResponseBytes} dimensions{cacheStatus}}
   status: httpRequestsAdaptiveGroups(limit:100,filter:$f){count dimensions{edgeResponseStatus}}
-  paths: httpRequestsAdaptiveGroups(limit:200,orderBy:[count_DESC],filter:$f){
-   count sum{edgeResponseBytes} dimensions{clientRequestPath cacheStatus}
+  paths: httpRequestsAdaptiveGroups(limit:1000,orderBy:[count_DESC],filter:$f){
+   count sum{edgeResponseBytes} dimensions{clientRequestPath cacheStatus edgeResponseStatus}
   }
   series: httpRequestsAdaptiveGroups(limit:2000,orderBy:[datetimeMinute_ASC],filter:$f60){
    count sum{edgeResponseBytes} dimensions{datetimeMinute cacheStatus}
@@ -438,6 +506,36 @@ _ANALYTICS_QUERY = """query($z:String!,$f:ZoneHttpRequestsAdaptiveGroupsFilter_I
 
 def _bytes(g: dict) -> int:
     return (g.get("sum") or {}).get("edgeResponseBytes") or 0
+
+
+def _merge_paths(rows) -> list[dict]:
+    """Pure: (path, count, bytes, cached?, status) rows -> top paths with cache share and errors."""
+    paths: dict[str, dict] = {}
+    for p, count, byts, is_cached, status in rows:
+        p = p if len(p) <= MAX_PATH else p[:MAX_PATH] + "…"
+        e = paths.setdefault(p, {"path": p, "requests": 0, "cached": 0, "bytes": 0, "errors_4xx": 0, "errors_5xx": 0})
+        e["requests"] += count
+        e["bytes"] += byts
+        if is_cached:
+            e["cached"] += count
+        if 400 <= status < 500:
+            e["errors_4xx"] += count
+        elif status >= 500:
+            e["errors_5xx"] += count
+    top = sorted(paths.values(), key=lambda e: -e["requests"])[:TOP_PATHS]
+    for e in top:
+        e["cached_share"] = round(e["cached"] / e["requests"], 3) if e["requests"] else 0.0
+    return top
+
+
+_ID_SEGMENT = re.compile(
+    r"^(\d+|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{16,}|(?=.*\d)[A-Za-z0-9_\-]{20,})$",
+    re.IGNORECASE)
+
+
+def mask_path(path: str) -> str:
+    """Pure: replaces id-like segments (numbers, UUIDs, hashes, tokens) with ':id'."""
+    return "/".join(":id" if s and _ID_SEGMENT.match(s) else s for s in path.split("/"))
 
 
 def summarize_analytics(z: dict, window_minutes: int = ANALYTICS_WINDOW) -> dict:
@@ -456,27 +554,20 @@ def summarize_analytics(z: dict, window_minutes: int = ANALYTICS_WINDOW) -> dict
     cached_req = sum(e["requests"] for e in by_status.values() if e["cached"])
     cached_bytes = sum(e["bytes"] for e in by_status.values() if e["cached"])
 
-    paths: dict[str, dict] = {}
-    for g in z.get("paths", []):
-        p = g["dimensions"]["clientRequestPath"] or "/"
-        p = p if len(p) <= MAX_PATH else p[:MAX_PATH] + "…"
-        e = paths.setdefault(p, {"path": p, "requests": 0, "cached": 0, "bytes": 0})
-        e["requests"] += g["count"]
-        e["bytes"] += _bytes(g)
-        if g["dimensions"]["cacheStatus"] in _CACHED:
-            e["cached"] += g["count"]
-    top_paths = sorted(paths.values(), key=lambda e: -e["requests"])[:TOP_PATHS]
-    for e in top_paths:
-        e["cached_share"] = round(e["cached"] / e["requests"], 3) if e["requests"] else 0.0
+    top_paths = _merge_paths(
+        ((g["dimensions"]["clientRequestPath"] or "/", g["count"], _bytes(g),
+          g["dimensions"]["cacheStatus"] in _CACHED, g["dimensions"].get("edgeResponseStatus") or 0)
+         for g in z.get("paths", [])))
 
     minutes: dict[str, dict] = {}
     for g in z.get("series", []):
         t = g["dimensions"]["datetimeMinute"]
-        e = minutes.setdefault(t, {"t": t, "requests": 0, "cached": 0, "bytes": 0})
+        e = minutes.setdefault(t, {"t": t, "requests": 0, "cached": 0, "bytes": 0, "cached_bytes": 0})
         e["requests"] += g["count"]
         e["bytes"] += _bytes(g)
         if g["dimensions"]["cacheStatus"] in _CACHED:
             e["cached"] += g["count"]
+            e["cached_bytes"] += _bytes(g)
     series = [minutes[k] for k in sorted(minutes)]
     # El primer y el último minuto vienen incompletos: se descartan para no dibujar falsas caídas.
     series = series[1:-1] if len(series) > 2 else series
@@ -503,8 +594,18 @@ def summarize_analytics(z: dict, window_minutes: int = ANALYTICS_WINDOW) -> dict
 
 def public_analytics(data: dict) -> dict:
     """Pure: the copy of get_analytics() that may go to the public landing.
-    Drops the requested paths (they can reveal internal URLs and API routes)."""
-    return {**data, "top_paths": []}
+    Paths keep their shape but id-like segments (numbers, UUIDs, tokens) become ':id'
+    and identical masked paths are merged."""
+    merged: dict[str, dict] = {}
+    for p in data.get("top_paths", []):
+        k = mask_path(p["path"])
+        e = merged.setdefault(k, {"path": k, "requests": 0, "cached": 0, "bytes": 0, "errors_4xx": 0, "errors_5xx": 0})
+        for f in ("requests", "cached", "bytes", "errors_4xx", "errors_5xx"):
+            e[f] += p.get(f, 0)
+    top = sorted(merged.values(), key=lambda e: -e["requests"])
+    for e in top:
+        e["cached_share"] = round(e["cached"] / e["requests"], 3) if e["requests"] else 0.0
+    return {**data, "top_paths": top}
 
 
 def ecosystem_analytics(rows: list[dict]) -> dict:
@@ -524,7 +625,41 @@ def ecosystem_analytics(rows: list[dict]) -> dict:
         if r.get("visits") is not None:
             visits = (visits or 0) + r["visits"]
     w = rows[0]["window_minutes"] if rows else ANALYTICS_WINDOW
+
+    # Merged breakdowns and per-minute series, same host dedupe.
+    uniq = list({r["host"]: r for r in rows}.values())
+    breakdowns: dict[str, list[dict]] = {}
+    for name in BREAKDOWNS:
+        if name == "hosts":
+            continue
+        agg: dict[str, dict] = {}
+        for r in uniq:
+            for e in (r.get("breakdowns") or {}).get(name, []):
+                a = agg.setdefault(e["key"], {"key": e["key"], "requests": 0, "bytes": 0})
+                a["requests"] += e["requests"]
+                a["bytes"] += e["bytes"]
+        if agg:
+            top = sorted(agg.values(), key=lambda e: -e["requests"])[:TOP_BREAKDOWN if name != "codes" else 15]
+            for e in top:
+                e["share"] = round(e["requests"] / req, 3) if req else 0.0
+            breakdowns[name] = top
+    minutes: dict[str, dict] = {}
+    for r in uniq:
+        for p in r.get("series", []):
+            m = minutes.setdefault(p["t"], {"t": p["t"], "requests": 0, "cached": 0, "bytes": 0, "cached_bytes": 0})
+            for f in ("requests", "cached", "bytes", "cached_bytes"):
+                m[f] += p.get(f, 0)
+    # Keep only minutes every site reported, so a site with a shorter series doesn't fake a drop.
+    n_sites = sum(1 for r in uniq if r.get("series"))
+    counts: dict[str, int] = {}
+    for r in uniq:
+        for p in r.get("series", []):
+            counts[p["t"]] = counts.get(p["t"], 0) + 1
+    series = [minutes[t] for t in sorted(minutes) if counts[t] == n_sites]
+
     return {
+        "breakdowns": breakdowns,
+        "series": series,
         "sites": len(seen),
         "requests": req,
         "requests_per_min": round(req / w, 1) if w else 0.0,
@@ -535,6 +670,45 @@ def ecosystem_analytics(rows: list[dict]) -> dict:
         "origin_requests": req - cached,
         "error_rate": round(err / req, 4) if req else 0.0,
     }
+
+
+_DIM_UNAVAILABLE = ("unknown field", "cannot query", "not authorized", "does not have access", "not available", "plan")
+
+
+def _fetch_extras(token: str, zone_id: str, now: datetime, host_filter: list[str] | None) -> dict:
+    """Extra breakdowns, never raises. Dimensions the zone's plan rejects are remembered and
+    skipped; a transient failure just leaves them out of this refresh."""
+    bad = _bad_dims.setdefault(zone_id, set())
+    names = [n for n in [*BREAKDOWNS, STATUS_SERIES] if n not in bad]
+    if not names:
+        return {}
+    variables = {"z": zone_id, "f": _window(now, ANALYTICS_WINDOW, host_filter),
+                 "f60": _window(now, SERIES_MINUTES, host_filter)}
+
+    def run(ns: list[str]) -> dict:
+        v = {k: variables[k] for k in ("z", "f", "f60") if k == "z" or f"${k}:" in _extras_query(ns)}
+        return _graphql(token, _extras_query(ns), v)
+
+    try:
+        d = run(names)
+        if not d.get("errors") and d.get("data"):
+            return d["data"]["viewer"]["zones"][0]
+    except Exception:  # noqa: BLE001
+        return {}
+    # Something in the batch failed: try each one alone to find out which.
+    out: dict = {}
+    for n in names:
+        try:
+            d = run([n])
+        except Exception:  # noqa: BLE001
+            return out   # network / rate limit: don't keep hammering, retry next refresh
+        if d.get("errors") or not d.get("data"):
+            if any(s in json.dumps(d.get("errors")).lower() for s in _DIM_UNAVAILABLE):
+                bad.add(n)
+                continue
+            return out
+        out.update(d["data"]["viewer"]["zones"][0])
+    return out
 
 
 def get_analytics(account_id: str, token: str, site_host: str) -> dict | None:
@@ -561,7 +735,7 @@ def get_analytics(account_id: str, token: str, site_host: str) -> dict | None:
             "f60": _window(now, SERIES_MINUTES, host_filter),
         })
 
-    try:
+    def core() -> dict:
         with_visits = zone["id"] not in _no_visits_zones
         d = run(with_visits)
         if with_visits and d.get("errors") and "visits" in json.dumps(d["errors"]).lower():
@@ -569,7 +743,16 @@ def get_analytics(account_id: str, token: str, site_host: str) -> dict | None:
             d = run(False)
         if d.get("errors") or not d.get("data"):
             raise RuntimeError(f"Cloudflare GraphQL: {d.get('errors')}")
-        data = {"zone": zone["name"], "host": host, **summarize_analytics(d["data"]["viewer"]["zones"][0])}
+        return d["data"]["viewer"]["zones"][0]
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            fut_core = pool.submit(core)
+            fut_extra = pool.submit(_fetch_extras, token, zone["id"], now, host_filter)
+            z = fut_core.result()
+            extra = fut_extra.result()
+        summary = summarize_analytics(z)
+        data = {"zone": zone["name"], "host": host, **summary, **summarize_breakdowns(extra, summary["requests"])}
         _analytics_cache[key] = (time.time(), data)
         return data
     except Exception:

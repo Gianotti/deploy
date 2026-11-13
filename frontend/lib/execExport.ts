@@ -24,6 +24,11 @@ export interface BurndownSummary {
   projected: number;
 }
 
+const BREAKDOWN_CSV: Record<string, string> = {
+  countries: "País", devices: "Dispositivo", browsers: "Navegador", os: "Sistema operativo", content: "Tipo de contenido",
+  referers: "Referer", hosts: "Dominio", methods: "Método", protocols: "Protocolo", codes: "Código de respuesta",
+};
+
 export function executiveCsv(data: ExecOverview, highlights: string[], burndown: BurndownSummary | null, cf?: ExecCloudflare | null): string {
   const rows: Cell[][] = [];
   const blank = () => rows.push([]);
@@ -103,6 +108,26 @@ export function executiveCsv(data: ExecOverview, highlights: string[], burndown:
         d ? n(d.cache.origin_requests, 0) : "", d ? pct(d.health.error_rate) : "", d?.health.origin_ms ?? "",
         d ? (d.stale ? "dato anterior" : "ok") : r.status === "error" ? `error: ${r.error ?? ""}` : r.status,
       ]);
+    }
+
+    const withPaths = cf.clients.filter((r) => r.data?.top_paths.length);
+    if (withPaths.length) {
+      blank();
+      rows.push(["Rutas más pedidas (Cloudflare)"]);
+      rows.push(["Cliente", "Ruta", "Requests", "Desde caché %", "4xx", "5xx", "MB transferidos"]);
+      for (const r of withPaths) for (const p of r.data!.top_paths) {
+        rows.push([r.client_name, p.path, n(p.requests, 0), pct(p.cached_share), n(p.errors_4xx ?? 0, 0), n(p.errors_5xx ?? 0, 0), n(p.bytes / 1048576, 2)]);
+      }
+    }
+
+    const withBd = cf.clients.filter((r) => r.data?.breakdowns && Object.keys(r.data.breakdowns).length);
+    if (withBd.length) {
+      blank();
+      rows.push(["Desgloses (Cloudflare)"]);
+      rows.push(["Cliente", "Desglose", "Valor", "Requests", "% de requests", "MB transferidos"]);
+      for (const r of withBd) for (const [name, list] of Object.entries(r.data!.breakdowns!)) {
+        for (const e of list ?? []) rows.push([r.client_name, BREAKDOWN_CSV[name] ?? name, e.key || "(desconocido)", n(e.requests, 0), pct(e.share), n(e.bytes / 1048576, 2)]);
+      }
     }
   }
 
