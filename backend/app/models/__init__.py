@@ -7,9 +7,10 @@ from app.models.notification_config import NotificationConfig
 from app.models.integration_config import IntegrationConfig
 from app.models.repository import Repository
 from app.models.team import Team, TeamChannel, TeamNotificationSlot
+from app.models.integrator import Integrator, IntegratorIP
 
 __all__ = [
     "User", "Country", "Client", "Promotion", "DeployRule",
     "NotificationConfig", "IntegrationConfig", "Repository",
-    "Team", "TeamChannel", "TeamNotificationSlot",
+    "Team", "TeamChannel", "TeamNotificationSlot", "Integrator", "IntegratorIP",
 ]

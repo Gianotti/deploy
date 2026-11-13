@@ -711,6 +711,48 @@ def _fetch_extras(token: str, zone_id: str, now: datetime, host_filter: list[str
     return out
 
 
+_INTEGRATOR_QUERY = """query($z:String!,$f:ZoneHttpRequestsAdaptiveGroupsFilter_InputObject!){viewer{zones(filter:{zoneTag:$z}){
+  paths: httpRequestsAdaptiveGroups(limit:5000,orderBy:[count_DESC],filter:$f){
+   count sum{edgeResponseBytes} dimensions{clientIP clientRequestPath clientRequestHTTPMethodName edgeResponseStatus cacheStatus}
+  }
+  series: httpRequestsAdaptiveGroups(limit:5000,orderBy:[%(b)s_ASC],filter:$f){count dimensions{clientIP %(b)s}}
+}}}"""
+_integrator_cache: dict[tuple, tuple[float, dict]] = {}
+
+
+def get_integrator_traffic(account_id: str, token: str, site_host: str, ips: list[str],
+                           minutes: int, bucket_dim: str) -> dict | None:
+    """Raw `paths` + `series` aliases for requests from `ips` to a host over the last `minutes`.
+    None if the host has no zone. Cached (2 min for short windows, 5 min otherwise);
+    the last good answer is returned (marked stale) when Cloudflare fails."""
+    host = normalize_host(site_host)
+    if not host or not ips:
+        return None
+    zone = resolve_zone(host, list_zones(account_id, token))
+    if not zone:
+        return None
+    key = (zone["id"], host, tuple(sorted(ips)), minutes)
+    ttl = 120 if minutes <= 60 else 300
+    cached = _integrator_cache.get(key)
+    if cached and time.time() - cached[0] < ttl:
+        return cached[1]
+    host_filter = None if host == zone["name"] else [host, "www." + host]
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    f = {**_window(now, minutes, host_filter), "clientIP_in": list(ips)}
+    try:
+        d = _graphql(token, _INTEGRATOR_QUERY % {"b": bucket_dim}, {"z": zone["id"], "f": f})
+        if d.get("errors") or not d.get("data"):
+            raise RuntimeError(f"Cloudflare GraphQL: {d.get('errors')}")
+        z = d["data"]["viewer"]["zones"][0]
+        data = {"zone": zone["name"], "host": host, "paths": z.get("paths") or [], "series": z.get("series") or []}
+        _integrator_cache[key] = (time.time(), data)
+        return data
+    except Exception:
+        if cached:
+            return {**cached[1], "stale": True}
+        raise
+
+
 def get_analytics(account_id: str, token: str, site_host: str) -> dict | None:
     """Live traffic and cache of a host (last 15 min + last hour per minute). None if no zone."""
     host = normalize_host(site_host)

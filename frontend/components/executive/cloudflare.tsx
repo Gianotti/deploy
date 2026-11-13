@@ -9,6 +9,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { PAD, Segmented, Tooltip, ticks, useScrub, useWidth } from "@/components/executive/charts";
 import { num, pctFmt, Section } from "@/components/executive/parts";
+import { IntegratorsCard } from "@/components/integrators";
 import {
   extractError, getExecutiveCloudflare, getPublicCloudflare,
   type CfAnalytics, type CfBreakdownName, type CfBreakdownRow, type CfClientRow, type CfMinute,
@@ -448,7 +449,8 @@ function SiteFacts({ d }: { d: CfAnalytics }) {
   );
 }
 
-export function SiteDetail({ d, name }: { d: CfAnalytics; name: string }) {
+/** `clientId` (authenticated views only) adds the integrators card. */
+export function SiteDetail({ d, name, clientId }: { d: CfAnalytics; name: string; clientId?: number }) {
   const totalReq = Math.max(1, d.requests);
   return (
     <div className="space-y-6">
@@ -483,6 +485,7 @@ export function SiteDetail({ d, name }: { d: CfAnalytics; name: string }) {
         </div>
       )}
       {d.top_paths.length > 0 && <PathsTable paths={d.top_paths} />}
+      {clientId != null && <IntegratorsCard clientId={clientId} />}
       <Breakdowns data={d.breakdowns} />
     </div>
   );
@@ -537,7 +540,7 @@ export function CloudflareAnalytics({ live, clientId, publicView }: {
   else if (clientId != null) {
     const r = rows[0];
     body = !r ? <p className={`text-sm ${muted}`}>Cliente no encontrado.</p>
-      : r.data ? <SiteDetail d={r.data} name={r.client_name} />
+      : r.data ? <SiteDetail d={r.data} name={r.client_name} clientId={publicView ? undefined : r.client_id} />
       : <p className={`text-sm ${muted}`}>{message(r)}</p>;
   } else {
     const eco = data.ecosystem;
@@ -612,7 +615,7 @@ export function CloudflareAnalytics({ live, clientId, publicView }: {
                     </tr>
                     {d && isOpen && (
                       <tr className="border-b border-gray-100 dark:border-navy-700/60">
-                        <td colSpan={9} className="py-5 px-1"><SiteDetail d={d} name={r.client_name} /></td>
+                        <td colSpan={9} className="py-5 px-1"><SiteDetail d={d} name={r.client_name} clientId={publicView ? undefined : r.client_id} /></td>
                       </tr>
                     )}
                   </Fragment>

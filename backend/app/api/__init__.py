@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from app.api.endpoints import auth, countries, clients, promotions, deploy_rules, deploy_windows, public, notifications, ga4, tracking, repositories, teams, cloudflare, executive
+from app.api.endpoints import auth, countries, clients, promotions, deploy_rules, deploy_windows, public, notifications, ga4, tracking, repositories, teams, cloudflare, executive, integrators
 
 api_router = APIRouter()
 api_router.include_router(auth.router)
@@ -16,3 +16,4 @@ api_router.include_router(repositories.router)
 api_router.include_router(teams.router)
 api_router.include_router(cloudflare.router)
 api_router.include_router(executive.router)
+api_router.include_router(integrators.router)

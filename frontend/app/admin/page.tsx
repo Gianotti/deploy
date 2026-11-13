@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import AuthGuard from "@/components/AuthGuard";
 import ClientAvatar from "@/components/ClientAvatar";
+import { IntegratorsAdmin } from "@/components/integrators";
 import { useAuth } from "@/lib/auth";
 import {
   getCountries, createCountry, deleteCountry,
@@ -22,7 +23,7 @@ import {
 } from "@/lib/api";
 import type { Country, Client, DeployRule, PromoType, DeployStatus, Repository, Team } from "@/types";
 
-type Tab = "countries" | "clients" | "rules" | "notifications" | "ga4" | "cloudflare" | "repositories" | "teams";
+type Tab = "countries" | "clients" | "rules" | "notifications" | "ga4" | "cloudflare" | "repositories" | "teams" | "integrators";
 
 const PROMO_TYPES: PromoType[] = ["PROMO_ESPECIAL", "PROMO_NORMAL"];
 const DEPLOY_STATUSES: DeployStatus[] = ["LIBRE", "RESTRINGIDO", "BLOQUEADO"];
@@ -1657,6 +1658,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "cloudflare",    label: "☁️ Cloudflare" },
   { id: "repositories",  label: "🗂 Repositorios" },
   { id: "teams",         label: "👥 Equipos" },
+  { id: "integrators",   label: "🔌 Integradores" },
 ];
 
 export default function AdminPage() {
@@ -1697,6 +1699,7 @@ export default function AdminPage() {
         {tab === "cloudflare"    && <CloudflareTab />}
         {tab === "repositories"  && <RepositoriesTab />}
         {tab === "teams"         && <TeamsTab />}
+        {tab === "integrators"   && <IntegratorsAdmin />}
       </div>
     </AuthGuard>
   );

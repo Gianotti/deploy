@@ -740,6 +740,55 @@ export async function getPublicCloudflare(): Promise<ExecCloudflare> {
   return (await api.get<ExecCloudflare>("/public/cloudflare")).data;
 }
 
+// ── Integrators (third parties calling our APIs from known IPs) ─────────────
+
+export interface IntegratorIP { id?: number; ip: string; label: string | null }
+export interface Integrator { id: number; name: string; notes: string | null; active: boolean; ips: IntegratorIP[] }
+export interface IntegratorInput { name: string; notes: string | null; active: boolean; ips: { ip: string; label: string | null }[] }
+
+export interface IntegratorPathRow {
+  method: string; path: string; requests: number; bytes: number;
+  errors_4xx: number; errors_5xx: number; status: Record<string, number>;
+}
+export interface IntegratorClientTraffic {
+  client_id: number; client_name: string; site_host: string | null;
+  requests: number; bytes: number; cached: number; errors_4xx: number; errors_5xx: number;
+  ips: { ip: string; requests: number }[];
+  paths: IntegratorPathRow[];
+  series: { t: string; requests: number }[];
+  last_seen: string | null;
+}
+export interface IntegratorTrafficRow {
+  id: number; name: string; active: boolean;
+  requests: number; requests_per_min: number; bytes: number;
+  errors_4xx: number; errors_5xx: number; error_rate: number; last_seen: string | null;
+  ips: { ip: string; label: string | null; requests: number }[];
+  clients: IntegratorClientTraffic[];
+}
+export interface IntegratorTraffic {
+  generated_at: string; minutes: number; configured: boolean; bucket_minutes?: number; stale?: boolean;
+  integrators: IntegratorTrafficRow[];
+  errors: { client_id: number; client_name: string; error: string }[];
+}
+
+export async function getIntegrators(): Promise<Integrator[]> {
+  return (await api.get<Integrator[]>("/integrators/")).data;
+}
+export async function createIntegrator(body: IntegratorInput): Promise<Integrator> {
+  return (await api.post<Integrator>("/integrators/", body)).data;
+}
+export async function updateIntegrator(id: number, body: IntegratorInput): Promise<Integrator> {
+  return (await api.put<Integrator>(`/integrators/${id}`, body)).data;
+}
+export async function deleteIntegrator(id: number): Promise<void> {
+  await api.delete(`/integrators/${id}`);
+}
+export async function getIntegratorTraffic(minutes: number, clientId?: number): Promise<IntegratorTraffic> {
+  const params: Record<string, number> = { minutes };
+  if (clientId != null) params.client_id = clientId;
+  return (await api.get<IntegratorTraffic>("/integrators/traffic", { params })).data;
+}
+
 export interface ExecDigestConfig {
   enabled: boolean;
   webhook_url: string | null;
