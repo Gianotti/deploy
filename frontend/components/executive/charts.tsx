@@ -12,7 +12,7 @@ import { Delta, shortDate } from "@/components/executive/parts";
 
 // ── Shared helpers ───────────────────────────────────────────────────────────
 
-function useWidth<T extends HTMLElement>(fallback = 720) {
+export function useWidth<T extends HTMLElement>(fallback = 720) {
   const ref = useRef<T>(null);
   const [w, setW] = useState(fallback);
   useEffect(() => {
@@ -33,7 +33,7 @@ function niceStep(raw: number) {
 }
 
 /** Clean ticks (0 / 5 / 10…) covering [min, max]. */
-function ticks(min: number, max: number, count = 4) {
+export function ticks(min: number, max: number, count = 4) {
   const step = niceStep((max - min) / count || 1);
   const lo = Math.floor(min / step) * step;
   const hi = Math.ceil(max / step) * step;
@@ -42,9 +42,9 @@ function ticks(min: number, max: number, count = 4) {
   return out;
 }
 
-const PAD = { l: 64, r: 16, t: 14, b: 28 };
+export const PAD = { l: 64, r: 16, t: 14, b: 28 };
 
-function LineKey({ dashed, muted }: { dashed?: boolean; muted?: boolean }) {
+export function LineKey({ dashed, muted }: { dashed?: boolean; muted?: boolean }) {
   return (
     <svg width="18" height="8" aria-hidden className="shrink-0">
       <line x1="1" x2="17" y1="4" y2="4" strokeWidth="2" strokeLinecap="round"
@@ -53,7 +53,7 @@ function LineKey({ dashed, muted }: { dashed?: boolean; muted?: boolean }) {
   );
 }
 
-function Tooltip({ x, width, children }: { x: number; width: number; children: React.ReactNode }) {
+export function Tooltip({ x, width, children }: { x: number; width: number; children: React.ReactNode }) {
   const right = x > width * 0.62;
   return (
     <div
@@ -76,7 +76,7 @@ function TipRow({ value, label, dashed, muted }: { value: string; label: string;
   );
 }
 
-function useScrub(n: number, initial: number) {
+export function useScrub(n: number, initial: number) {
   const [hover, setHover] = useState<number | null>(null);
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (e.key !== "ArrowLeft" && e.key !== "ArrowRight" && e.key !== "Home" && e.key !== "End") return;

@@ -260,6 +260,48 @@ def overview(db: Session = Depends(get_db), _=Depends(get_current_user)):
     return build_overview(db)
 
 
+@router.get("/cloudflare")
+def cloudflare_live(db: Session = Depends(get_db), _=Depends(get_current_user)):
+    """Live consumption and cache per client from Cloudflare (last 15 min, cached 60 s).
+
+    Same for every client, including the ones without GA4 (e.g. embedded in another app)."""
+    from app.api.endpoints.cloudflare import get_cf_creds
+
+    creds = get_cf_creds(db)
+    clients = db.query(Client).order_by(Client.name).all()
+    countries = {c.id: c.name for c in db.query(Country).all()}
+    base = {"generated_at": datetime.utcnow().isoformat() + "Z", "window_minutes": cloudflare_service.ANALYTICS_WINDOW,
+            "series_minutes": cloudflare_service.SERIES_MINUTES}
+    if not creds:
+        return {**base, "configured": False, "ecosystem": None, "clients": []}
+
+    targets = [(c.id, c.name, countries.get(c.country_id, ""), c.site_host, bool(c.ga4_property_id)) for c in clients]
+
+    def fetch(t):
+        cid, name, country, host, has_ga4 = t
+        row = {"client_id": cid, "client_name": name, "country_name": country, "site_host": host,
+               "has_ga4": has_ga4, "status": "ok", "error": None, "data": None}
+        if not host:
+            row["status"] = "no_host"
+            return row
+        try:
+            data = cloudflare_service.get_analytics(creds["account_id"], creds["api_token"], host)
+            if data is None:
+                row["status"] = "no_zone"
+            else:
+                row["data"] = data
+        except Exception as e:  # noqa: BLE001
+            row["status"] = "error"
+            row["error"] = str(e)[:160]
+        return row
+
+    with ThreadPoolExecutor(max_workers=max(1, min(len(targets), 8))) as pool:
+        rows = list(pool.map(fetch, targets))
+    return {**base, "configured": True,
+            "ecosystem": cloudflare_service.ecosystem_analytics([r["data"] for r in rows if r["data"]]),
+            "clients": rows}
+
+
 def warm_cache() -> None:
     """Scheduler job: refresh GA4 reports in the background so the page opens instantly."""
     from app.db.base import SessionLocal

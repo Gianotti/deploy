@@ -53,7 +53,7 @@ npm run build    # also the only type check — there is no lint/tsc script
 npm run start
 ```
 
-There is no linter or formatter configured for either backend or frontend. Backend tests cover only pure functions with no DB or network: the rules engine (`test_engine.py`), CMO metrics (`test_executive.py`), GA4 bot heuristics (`test_bot_detection.py`), GA4 access merging (`test_ga4_access.py`) and Cloudflare IP/UA classification (`test_cloudflare_classify.py`). Keep new logic in these modules I/O-free so it stays testable the same way.
+There is no linter or formatter configured for either backend or frontend. Backend tests cover only pure functions with no DB or network: the rules engine (`test_engine.py`), CMO metrics (`test_executive.py`), GA4 bot heuristics (`test_bot_detection.py`), GA4 access merging (`test_ga4_access.py`) Cloudflare IP/UA classification (`test_cloudflare_classify.py`) and Cloudflare live analytics summaries (`test_cloudflare_analytics.py`). Keep new logic in these modules I/O-free so it stays testable the same way.
 
 ### Docker (full stack)
 
@@ -132,6 +132,8 @@ Weekly digest: config lives in `IntegrationConfig` key `executive_digest` (`enab
 ### Cloudflare integration & bot detection
 
 Credentials (`account_id` + `api_token`) live in `IntegrationConfig` under key `cloudflare` (`get_cf_creds()` in `api/endpoints/cloudflare.py`). A client is linked to Cloudflare through `Client.site_host` (stored normalized by `normalize_host()`: no scheme, path, port or `www.`), which is matched to the account's zone that contains it. `cloudflare_service.get_bot_traffic()` queries the GraphQL Analytics API for the last 15 minutes and returns bot/datacenter IPs only (residential IPs are never returned), plus zone `health` and `firewall` events. Data is cached in process memory (zones 1h, traffic 2 min). Zones on the Free plan lack ASN and firewall data; the service records this in `_no_asn_zones`/`_no_fw_zones` and degrades without failing.
+
+**Live analytics ("Analytics de Cloudflare" in `/executive`)**: `GET /executive/cloudflare` (auth required) calls `cloudflare_service.get_analytics()` per client with a `site_host`, independent of GA4 (covers clients whose GA4 is unavailable, e.g. embedded in another app). It returns the last 15 min (requests, bytes, visits when the plan has them, cache hit ratio by requests/bytes, breakdown by `cacheStatus`, top paths, 5xx, origin latency) plus a 60-min per-minute series. The math is pure (`summarize_analytics()`, `ecosystem_analytics()`). It is cached 60 s, and stale data is returned on error. The frontend (`components/executive/cloudflare.tsx`) polls every minute and includes it in the CSV.
 
 `services/bot_detection.py` is a pure scoring heuristic over GA4 realtime data (no IP/UA available there): each signal adds weight, total ≥4 → `likely`, ≥2 → `possible`. Cloudflare's non-search bot share is one extra signal. Below `MIN_USERS`/`CF_MIN_REQUESTS` signals are ignored as noise. GA4 users with unknown country (`(not set)`/`ZZ`) don't count as foreign traffic.
 

@@ -9,6 +9,7 @@ import {
   calendarSummary, change, convLabel, money, num, pctFmt, shortDate, type MtdRow,
 } from "@/components/executive/parts";
 import { Burndown, Segmented, TrendChart } from "@/components/executive/charts";
+import { CloudflareAnalytics, useCloudflareLive } from "@/components/executive/cloudflare";
 import { extractError, getExecutiveOverview, type ExecClient, type ExecEcoDay, type ExecOverview } from "@/lib/api";
 import { downloadText, executiveCsv } from "@/lib/execExport";
 
@@ -205,6 +206,7 @@ export default function ExecutivePage() {
   const [sort, setSort] = useState<{ key: SortKey; desc: boolean }>({ key: "sessions", desc: true });
   const [metricKey, setMetricKey] = useState<string | null>(null);
   const [boost, setBoost] = useState(0);
+  const cfLive = useCloudflareLive();
 
   useEffect(() => {
     getExecutiveOverview().then(setData).catch((e) => setError(extractError(e)));
@@ -237,7 +239,7 @@ export default function ExecutivePage() {
     const csv = executiveCsv(data, notes.map((h) => h.text), metric && target > 0 ? {
       metric: metric.label, target_label: boost ? `Mes anterior +${boost}%` : "Mes anterior", target, done,
       projected: data.mtd ? (done / Math.max(monthValues.length, 1)) * data.mtd.days_in_month : done,
-    } : null);
+    } : null, cfLive.data);
     downloadText(`rendimiento-comercial-${new Date().toISOString().slice(0, 10)}.csv`, csv);
   };
 
@@ -596,6 +598,9 @@ export default function ExecutivePage() {
             )}
           </>
         )}
+
+        {/* Cloudflare: live, for every client, including the ones GA4 can't see */}
+        <CloudflareAnalytics live={cfLive} />
       </div>
     </AuthGuard>
   );

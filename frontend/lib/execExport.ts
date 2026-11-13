@@ -1,7 +1,7 @@
 // CSV export for /executive. `;` separator + BOM + decimal comma so Excel in
 // Spanish opens it with the right columns and numbers (same as the GA4 users CSV).
 
-import type { ExecClient, ExecOverview, ExecPair, ExecPairN } from "@/lib/api";
+import type { ExecClient, ExecCloudflare, ExecOverview, ExecPair, ExecPairN } from "@/lib/api";
 
 type Cell = string | number | null | undefined;
 
@@ -24,7 +24,7 @@ export interface BurndownSummary {
   projected: number;
 }
 
-export function executiveCsv(data: ExecOverview, highlights: string[], burndown: BurndownSummary | null): string {
+export function executiveCsv(data: ExecOverview, highlights: string[], burndown: BurndownSummary | null, cf?: ExecCloudflare | null): string {
   const rows: Cell[][] = [];
   const blank = () => rows.push([]);
   const eco = data.ecosystem;
@@ -89,6 +89,22 @@ export function executiveCsv(data: ExecOverview, highlights: string[], burndown:
   const currencies = Array.from(new Set(data.daily.flatMap((d) => Object.keys(d.revenue))));
   rows.push(["Día", "Sesiones", "Compras", ...currencies.map((c) => `Ingresos ${c}`)]);
   for (const d of data.daily) rows.push([d.date, n(d.sessions, 0), n(d.purchases, 0), ...currencies.map((c) => n(d.revenue[c] ?? 0))]);
+
+  if (cf?.configured && cf.clients.length) {
+    blank();
+    rows.push([`Analytics de Cloudflare (últimos ${cf.window_minutes} min, ${cf.generated_at})`]);
+    rows.push(["Cliente", "Sitio", "Tiene GA4", "Requests", "Req/min", "Visitas", "MB transferidos", "Desde caché %", "Bytes desde caché %", "Al origen", "5xx %", "Origen ms", "Estado"]);
+    for (const r of cf.clients) {
+      const d = r.data;
+      rows.push([
+        r.client_name, d?.host ?? r.site_host ?? "", r.has_ga4 ? "sí" : "no",
+        d ? n(d.requests, 0) : "", d ? n(d.requests_per_min, 1) : "", d?.visits != null ? n(d.visits, 0) : "",
+        d ? n(d.bytes / 1048576, 1) : "", d ? pct(d.cache.hit_ratio) : "", d ? pct(d.cache.bytes_ratio) : "",
+        d ? n(d.cache.origin_requests, 0) : "", d ? pct(d.health.error_rate) : "", d?.health.origin_ms ?? "",
+        d ? (d.stale ? "dato anterior" : "ok") : r.status === "error" ? `error: ${r.error ?? ""}` : r.status,
+      ]);
+    }
+  }
 
   return "﻿" + rows.map((r) => r.map(cell).join(";")).join("\r\n");
 }

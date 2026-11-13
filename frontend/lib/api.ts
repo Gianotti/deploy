@@ -675,6 +675,53 @@ export async function getExecutiveOverview(): Promise<ExecOverview> {
   return (await api.get<ExecOverview>("/executive/overview")).data;
 }
 
+// Cloudflare live analytics for /executive (same for every client, GA4 or not)
+export interface CfCacheStatus { status: string; cached: boolean; requests: number; bytes: number }
+export interface CfMinute { t: string; requests: number; cached: number; bytes: number }
+export interface CfAnalytics {
+  zone: string;
+  host: string;
+  window_minutes: number;
+  requests: number;
+  requests_per_min: number;
+  bytes: number;
+  visits: number | null;
+  stale?: boolean;
+  cache: {
+    hit_ratio: number; bytes_ratio: number; cached_requests: number; cached_bytes: number;
+    origin_requests: number; by_status: CfCacheStatus[];
+  };
+  health: { status: Record<"2xx" | "3xx" | "4xx" | "5xx", number>; error_rate: number; cached_share: number; origin_ms: number | null };
+  top_paths: { path: string; requests: number; cached: number; bytes: number; cached_share: number }[];
+  series: CfMinute[];
+}
+export interface CfClientRow {
+  client_id: number;
+  client_name: string;
+  country_name: string;
+  site_host: string | null;
+  has_ga4: boolean;
+  status: "ok" | "no_host" | "no_zone" | "error";
+  error: string | null;
+  data: CfAnalytics | null;
+}
+export interface CfEcosystem {
+  sites: number; requests: number; requests_per_min: number; bytes: number; visits: number | null;
+  hit_ratio: number; bytes_ratio: number; origin_requests: number; error_rate: number;
+}
+export interface ExecCloudflare {
+  generated_at: string;
+  window_minutes: number;
+  series_minutes: number;
+  configured: boolean;
+  ecosystem: CfEcosystem | null;
+  clients: CfClientRow[];
+}
+
+export async function getExecutiveCloudflare(): Promise<ExecCloudflare> {
+  return (await api.get<ExecCloudflare>("/executive/cloudflare")).data;
+}
+
 export interface ExecDigestConfig {
   enabled: boolean;
   webhook_url: string | null;

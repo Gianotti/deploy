@@ -409,3 +409,164 @@ def get_bot_traffic(account_id: str, token: str, site_host: str) -> dict | None:
         if cached:
             return cached[1]
         raise
+
+
+# ── Analytics (consumo en vivo y caché) ──────────────────────────────────────
+# Lo que /executive muestra en "Analytics de Cloudflare". Sirve también para los
+# clientes sin GA4 (p. ej. embebidos en otra app). Respeta el mismo filtro por host.
+
+ANALYTICS_WINDOW = 15
+ANALYTICS_TTL = 60
+TOP_PATHS = 8
+_analytics_cache: dict[tuple[str, str], tuple[float, dict]] = {}
+_no_visits_zones: set[str] = set()   # zonas donde la API no expone sum.visits
+
+_ANALYTICS_QUERY = """query($z:String!,$f:ZoneHttpRequestsAdaptiveGroupsFilter_InputObject!,
+ $f60:ZoneHttpRequestsAdaptiveGroupsFilter_InputObject!){
+ viewer{zones(filter:{zoneTag:$z}){
+  total: httpRequestsAdaptiveGroups(limit:1,filter:$f){count sum{edgeResponseBytes%s} avg{originResponseDurationMs}}
+  cache: httpRequestsAdaptiveGroups(limit:30,filter:$f){count sum{edgeResponseBytes} dimensions{cacheStatus}}
+  status: httpRequestsAdaptiveGroups(limit:100,filter:$f){count dimensions{edgeResponseStatus}}
+  paths: httpRequestsAdaptiveGroups(limit:200,orderBy:[count_DESC],filter:$f){
+   count sum{edgeResponseBytes} dimensions{clientRequestPath cacheStatus}
+  }
+  series: httpRequestsAdaptiveGroups(limit:2000,orderBy:[datetimeMinute_ASC],filter:$f60){
+   count sum{edgeResponseBytes} dimensions{datetimeMinute cacheStatus}
+  }
+ }}}"""
+
+
+def _bytes(g: dict) -> int:
+    return (g.get("sum") or {}).get("edgeResponseBytes") or 0
+
+
+def summarize_analytics(z: dict, window_minutes: int = ANALYTICS_WINDOW) -> dict:
+    """Pure: raw GraphQL zone block -> traffic, cache breakdown, top paths and per-minute series."""
+    tot = z["total"][0] if z.get("total") else {}
+    total = tot.get("count", 0)
+    total_bytes = _bytes(tot)
+    visits = (tot.get("sum") or {}).get("visits")
+
+    by_status: dict[str, dict] = {}
+    for g in z.get("cache", []):
+        k = g["dimensions"]["cacheStatus"] or "unknown"
+        e = by_status.setdefault(k, {"status": k, "cached": k in _CACHED, "requests": 0, "bytes": 0})
+        e["requests"] += g["count"]
+        e["bytes"] += _bytes(g)
+    cached_req = sum(e["requests"] for e in by_status.values() if e["cached"])
+    cached_bytes = sum(e["bytes"] for e in by_status.values() if e["cached"])
+
+    paths: dict[str, dict] = {}
+    for g in z.get("paths", []):
+        p = g["dimensions"]["clientRequestPath"] or "/"
+        p = p if len(p) <= MAX_PATH else p[:MAX_PATH] + "…"
+        e = paths.setdefault(p, {"path": p, "requests": 0, "cached": 0, "bytes": 0})
+        e["requests"] += g["count"]
+        e["bytes"] += _bytes(g)
+        if g["dimensions"]["cacheStatus"] in _CACHED:
+            e["cached"] += g["count"]
+    top_paths = sorted(paths.values(), key=lambda e: -e["requests"])[:TOP_PATHS]
+    for e in top_paths:
+        e["cached_share"] = round(e["cached"] / e["requests"], 3) if e["requests"] else 0.0
+
+    minutes: dict[str, dict] = {}
+    for g in z.get("series", []):
+        t = g["dimensions"]["datetimeMinute"]
+        e = minutes.setdefault(t, {"t": t, "requests": 0, "cached": 0, "bytes": 0})
+        e["requests"] += g["count"]
+        e["bytes"] += _bytes(g)
+        if g["dimensions"]["cacheStatus"] in _CACHED:
+            e["cached"] += g["count"]
+    series = [minutes[k] for k in sorted(minutes)]
+    # El primer y el último minuto vienen incompletos: se descartan para no dibujar falsas caídas.
+    series = series[1:-1] if len(series) > 2 else series
+
+    return {
+        "window_minutes": window_minutes,
+        "requests": total,
+        "requests_per_min": round(total / window_minutes, 1) if window_minutes else 0.0,
+        "bytes": total_bytes,
+        "visits": visits,
+        "cache": {
+            "hit_ratio": round(cached_req / total, 3) if total else 0.0,
+            "bytes_ratio": round(cached_bytes / total_bytes, 3) if total_bytes else 0.0,
+            "cached_requests": cached_req,
+            "cached_bytes": cached_bytes,
+            "origin_requests": total - cached_req,
+            "by_status": sorted(by_status.values(), key=lambda e: -e["requests"]),
+        },
+        "health": _health(z, total),
+        "top_paths": top_paths,
+        "series": series,
+    }
+
+
+def ecosystem_analytics(rows: list[dict]) -> dict:
+    """Pure: totals across clients. Rows sharing a host are counted once."""
+    seen: set[str] = set()
+    req = cached = byts = cbytes = err = 0
+    visits: int | None = None
+    for r in rows:
+        if r["host"] in seen:
+            continue
+        seen.add(r["host"])
+        req += r["requests"]
+        cached += r["cache"]["cached_requests"]
+        byts += r["bytes"]
+        cbytes += r["cache"]["cached_bytes"]
+        err += r["health"]["status"]["5xx"]
+        if r.get("visits") is not None:
+            visits = (visits or 0) + r["visits"]
+    w = rows[0]["window_minutes"] if rows else ANALYTICS_WINDOW
+    return {
+        "sites": len(seen),
+        "requests": req,
+        "requests_per_min": round(req / w, 1) if w else 0.0,
+        "bytes": byts,
+        "visits": visits,
+        "hit_ratio": round(cached / req, 3) if req else 0.0,
+        "bytes_ratio": round(cbytes / byts, 3) if byts else 0.0,
+        "origin_requests": req - cached,
+        "error_rate": round(err / req, 4) if req else 0.0,
+    }
+
+
+def get_analytics(account_id: str, token: str, site_host: str) -> dict | None:
+    """Live traffic and cache of a host (last 15 min + last hour per minute). None if no zone."""
+    host = normalize_host(site_host)
+    if not host:
+        return None
+    zone = resolve_zone(host, list_zones(account_id, token))
+    if not zone:
+        return None
+
+    key = (zone["id"], host)
+    cached = _analytics_cache.get(key)
+    if cached and time.time() - cached[0] < ANALYTICS_TTL:
+        return cached[1]
+
+    host_filter = None if host == zone["name"] else [host, "www." + host]
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+
+    def run(with_visits: bool) -> dict:
+        return _graphql(token, _ANALYTICS_QUERY % (" visits" if with_visits else ""), {
+            "z": zone["id"],
+            "f": _window(now, ANALYTICS_WINDOW, host_filter),
+            "f60": _window(now, SERIES_MINUTES, host_filter),
+        })
+
+    try:
+        with_visits = zone["id"] not in _no_visits_zones
+        d = run(with_visits)
+        if with_visits and d.get("errors") and "visits" in json.dumps(d["errors"]).lower():
+            _no_visits_zones.add(zone["id"])
+            d = run(False)
+        if d.get("errors") or not d.get("data"):
+            raise RuntimeError(f"Cloudflare GraphQL: {d.get('errors')}")
+        data = {"zone": zone["name"], "host": host, **summarize_analytics(d["data"]["viewer"]["zones"][0])}
+        _analytics_cache[key] = (time.time(), data)
+        return data
+    except Exception:
+        if cached:
+            return {**cached[1], "stale": True}
+        raise

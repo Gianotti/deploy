@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import AuthGuard from "@/components/AuthGuard";
+import { CloudflareAnalytics, useCloudflareLive } from "@/components/executive/cloudflare";
 import { clientSlug } from "@/components/landing/parts";
 import {
   DailyBars, ExecLogo, Funnel, KpiTile, MtdTable, PROMO_TYPE, PromoRanking, PromoResults, QualityBadge, Section,
@@ -75,6 +76,7 @@ export default function ExecutiveClientPage() {
     getExecutiveOverview().then(setData).catch((e) => setError(extractError(e)));
   }, []);
 
+  const cfLive = useCloudflareLive();
   const client = data?.clients.find((c) => clientSlug(c) === slug || String(c.client_id) === slug);
   const k = client?.kpis;
   const promosInChart = client
@@ -115,6 +117,8 @@ export default function ExecutiveClientPage() {
                 ))}
               </div>
             )}
+
+            <CloudflareAnalytics live={cfLive} clientId={client.client_id} />
 
             {!k ? (
               <div className="card p-5 text-sm text-gray-600 dark:text-gray-300">
