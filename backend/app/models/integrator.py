@@ -1,12 +1,20 @@
-from sqlalchemy import Boolean, Column, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Column, ForeignKey, Integer, String, Table, Text
 from sqlalchemy.orm import relationship
 
 from app.db.base import Base
 
+# Which clients (stores) each integrator works with. Traffic is only looked up there.
+integrator_clients = Table(
+    "integrator_clients",
+    Base.metadata,
+    Column("integrator_id", Integer, ForeignKey("integrators.id", ondelete="CASCADE"), primary_key=True),
+    Column("client_id", Integer, ForeignKey("clients.id", ondelete="CASCADE"), primary_key=True),
+)
+
 
 class Integrator(Base):
-    """A third party (e.g. Sincroshop) that calls our sites' APIs from known IPs.
-    Its traffic is detected in Cloudflare by matching those IPs."""
+    """A third party (e.g. Sincroshop) that calls some clients' APIs from known IPs.
+    Its traffic is detected in Cloudflare by matching those IPs on its linked clients' sites."""
     __tablename__ = "integrators"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -16,6 +24,7 @@ class Integrator(Base):
 
     ips = relationship("IntegratorIP", back_populates="integrator", cascade="all, delete-orphan",
                        order_by="IntegratorIP.id")
+    clients = relationship("Client", secondary=integrator_clients, order_by="Client.name")
 
 
 class IntegratorIP(Base):

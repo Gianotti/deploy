@@ -53,16 +53,21 @@ def test_group_by_integrator_totals_and_unseen_ips():
     z = {"paths": [_p(60, "100.25.27.248", "/api/v1/orders/", status=500)],
          "series": [_s(60, "100.25.27.248", "t1")]}
     rows = [{"client_id": 7, "client_name": "BNA", "site_host": "bna.com", "by_integrator": summarize_zone(z, owner, "datetimeMinute")},
-            {"client_id": 8, "client_name": "Otro", "site_host": "otro.com", "by_integrator": {}}]
-    its = [{"id": 1, "name": "Sincroshop", "ips": [{"ip": "100.25.27.248", "label": "prod"}, {"ip": "2.2.2.2", "label": None}]},
-           {"id": 2, "name": "Quiet", "ips": []}]
+            {"client_id": 8, "client_name": "Otro", "site_host": "otro.com", "by_integrator": {}},
+            {"client_id": 9, "client_name": "Ajeno", "site_host": None, "error": "Sin dominio", "by_integrator": {}}]
+    its = [{"id": 1, "name": "Sincroshop", "client_ids": [8, 7],
+            "ips": [{"ip": "100.25.27.248", "label": "prod"}, {"ip": "2.2.2.2", "label": None}]},
+           {"id": 2, "name": "Quiet", "ips": [], "client_ids": [9]},
+           {"id": 3, "name": "Unlinked", "ips": [], "client_ids": []}]
     g = group_by_integrator(its, rows, 60)
-    assert [e["name"] for e in g] == ["Sincroshop", "Quiet"]
+    assert [e["name"] for e in g] == ["Sincroshop", "Quiet", "Unlinked"]
     s = g[0]
     assert (s["requests"], s["requests_per_min"], s["error_rate"], s["last_seen"]) == (60, 1.0, 1.0, "t1")
-    assert [c["client_name"] for c in s["clients"]] == ["BNA"]
+    # Linked clients only, also the ones without traffic; busiest first.
+    assert [(c["client_name"], c["requests"]) for c in s["clients"]] == [("BNA", 60), ("Otro", 0)]
     assert s["ips"] == [{"ip": "100.25.27.248", "label": "prod", "requests": 60}, {"ip": "2.2.2.2", "label": None, "requests": 0}]
-    assert g[1]["requests"] == 0 and g[1]["clients"] == [] and g[1]["last_seen"] is None
+    assert g[1]["requests"] == 0 and g[1]["clients"][0]["error"] == "Sin dominio" and g[1]["last_seen"] is None
+    assert g[2]["clients"] == []
 
 
 def test_buckets():

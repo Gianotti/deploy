@@ -743,8 +743,13 @@ export async function getPublicCloudflare(): Promise<ExecCloudflare> {
 // ── Integrators (third parties calling our APIs from known IPs) ─────────────
 
 export interface IntegratorIP { id?: number; ip: string; label: string | null }
-export interface Integrator { id: number; name: string; notes: string | null; active: boolean; ips: IntegratorIP[] }
-export interface IntegratorInput { name: string; notes: string | null; active: boolean; ips: { ip: string; label: string | null }[] }
+export interface Integrator {
+  id: number; name: string; notes: string | null; active: boolean; ips: IntegratorIP[];
+  clients: { id: number; name: string; site_host: string | null }[];
+}
+export interface IntegratorInput {
+  name: string; notes: string | null; active: boolean; ips: { ip: string; label: string | null }[]; client_ids: number[];
+}
 
 export interface IntegratorPathRow {
   method: string; path: string; requests: number; bytes: number;
@@ -752,6 +757,8 @@ export interface IntegratorPathRow {
 }
 export interface IntegratorClientTraffic {
   client_id: number; client_name: string; site_host: string | null;
+  /** Why this linked site couldn't be measured (no domain, no zone, Cloudflare error). */
+  error?: string | null;
   requests: number; bytes: number; cached: number; errors_4xx: number; errors_5xx: number;
   ips: { ip: string; requests: number }[];
   paths: IntegratorPathRow[];

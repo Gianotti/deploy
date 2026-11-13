@@ -24,6 +24,12 @@ class IntegratorIn(BaseModel):
     notes: str | None = None
     active: bool = True
     ips: list[IntegratorIPIn] = []
+    client_ids: list[int] = []
+
+    @field_validator("client_ids")
+    @classmethod
+    def _dedupe(cls, v: list[int]) -> list[int]:
+        return list(dict.fromkeys(v))
 
     @field_validator("name")
     @classmethod
@@ -51,10 +57,18 @@ class IntegratorIPOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class IntegratorClientOut(BaseModel):
+    id: int
+    name: str
+    site_host: str | None = None
+    model_config = {"from_attributes": True}
+
+
 class IntegratorOut(BaseModel):
     id: int
     name: str
     notes: str | None = None
     active: bool
     ips: list[IntegratorIPOut] = []
+    clients: list[IntegratorClientOut] = []
     model_config = {"from_attributes": True}

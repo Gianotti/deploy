@@ -12,7 +12,7 @@ import { num, pctFmt } from "@/components/executive/parts";
 import { fmtBytes } from "@/components/executive/cloudflare";
 import { useAuth } from "@/lib/auth";
 import {
-  createIntegrator, deleteIntegrator, extractError, getIntegrators, getIntegratorTraffic, getPublicIntegratorTraffic, updateIntegrator,
+  createIntegrator, deleteIntegrator, extractError, getClients, getIntegrators, getIntegratorTraffic, getPublicIntegratorTraffic, updateIntegrator,
   type Integrator, type IntegratorInput, type IntegratorTraffic, type IntegratorTrafficRow,
 } from "@/lib/api";
 
@@ -139,7 +139,7 @@ function IntegratorPanel({ row, minutes, single }: { row: IntegratorTrafficRow; 
   const series = useMemo(() => sumSeries(row), [row]);
   const idle = row.requests === 0;
   return (
-    <div className="rounded-xl border border-gray-200 dark:border-navy-700 p-4 space-y-4">
+    <div id={`integrador-${row.id}`} className="rounded-xl border border-gray-200 dark:border-navy-700 p-4 space-y-4 scroll-mt-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h3 className="font-semibold text-gray-900 dark:text-white">{row.name}</h3>
@@ -172,8 +172,15 @@ function IntegratorPanel({ row, minutes, single }: { row: IntegratorTrafficRow; 
         {row.ips.length === 0 && <span className={`text-xs ${muted}`}>Sin IPs cargadas</span>}
       </div>
 
+      {row.clients.length === 0 && !single && (
+        <p className={`text-sm ${muted}`}>Sin clientes asociados: asocialo a sus tiendas en Administrar.</p>
+      )}
       {row.clients.length > 0 && (
-        single ? <PathsTable c={row.clients[0]} /> : (
+        single ? (
+          row.clients[0].error ? <p className="text-sm text-down">{row.clients[0].error}</p>
+          : row.clients[0].paths.length ? <PathsTable c={row.clients[0]} />
+          : <p className={`text-sm ${muted}`}>Sin requests de sus IPs en {windowLabel(minutes)}.</p>
+        ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm text-left min-w-[560px]">
               <thead>
@@ -200,7 +207,7 @@ function IntegratorPanel({ row, minutes, single }: { row: IntegratorTrafficRow; 
                             </svg>
                             {c.client_name}
                           </button>
-                          <p className={`text-xs ${muted} pl-[18px]`}>{c.site_host}</p>
+                          <p className={`text-xs pl-[18px] ${c.error ? "text-down" : muted}`}>{c.error ?? c.site_host}</p>
                         </td>
                         <td className={tdNum}>{num(c.requests)}</td>
                         <td className={`${tdNum} ${c.errors_5xx ? "text-down font-medium" : ""}`}>{errs ? `${num(errs)} (${pctFmt(errs / c.requests, 0)})` : "—"}</td>
@@ -209,7 +216,7 @@ function IntegratorPanel({ row, minutes, single }: { row: IntegratorTrafficRow; 
                           {c.paths[0] ? `${c.paths[0].method} ${c.paths[0].path}` : "—"}
                         </td>
                       </tr>
-                      {isOpen && (
+                      {isOpen && c.paths.length > 0 && (
                         <tr className="border-b border-gray-100 dark:border-navy-700/60">
                           <td colSpan={5} className="py-3 px-1"><PathsTable c={c} /></td>
                         </tr>
@@ -234,16 +241,63 @@ function TrafficBody({ live, minutes, single, emptyHint }: {
   if (!data) return <div className="h-32 rounded-xl bg-gray-100 dark:bg-navy-700/40 motion-safe:animate-pulse" aria-busy />;
   if (!data.configured) return <p className={`text-sm ${muted}`}>Cloudflare no está configurado. Cargá el token en Admin → Cloudflare.</p>;
   if (data.integrators.length === 0) return <>{emptyHint}</>;
-  const rows = single ? data.integrators.filter((r) => r.requests > 0) : data.integrators;
+  const rows = data.integrators;
   return (
     <div className="space-y-4">
       {data.errors.length > 0 && (
         <p className="text-xs text-down">Sin datos de {data.errors.map((e) => e.client_name).join(", ")}: {data.errors[0].error}</p>
       )}
-      {single && rows.length === 0 && (
-        <p className={`text-sm ${muted}`}>Ningún integrador consumió este sitio en {windowLabel(minutes) === "1 h" ? "la última hora" : `los últimos ${windowLabel(minutes)}`}.</p>
-      )}
+      {single && <ActiveList rows={rows} minutes={minutes} />}
+      {single && <h4 className={`text-xs font-medium uppercase tracking-wide ${muted} pt-2`}>Detalle por integrador</h4>}
       {rows.map((r) => <IntegratorPanel key={r.id} row={r} minutes={minutes} single={single} />)}
+    </div>
+  );
+}
+
+/** One client: every active integrator linked to it, with its numbers in the window. */
+function ActiveList({ rows, minutes }: { rows: IntegratorTrafficRow[]; minutes: number }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm text-left min-w-[560px]">
+        <caption className={`text-left text-xs ${muted} pb-2`}>
+          {rows.length} {rows.length === 1 ? "integrador activo" : "integradores activos"} en este cliente · {windowLabel(minutes)}
+        </caption>
+        <thead>
+          <tr className="border-b border-gray-100 dark:border-navy-700">
+            <th className={thCls}>Integrador</th>
+            <th className={thCls}>IPs</th>
+            <th className={`${thCls} text-right`}>Requests</th>
+            <th className={`${thCls} text-right`}>Por minuto</th>
+            <th className={`${thCls} text-right`}>Errores</th>
+            <th className={thCls}>Estado</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => {
+            const errs = r.errors_4xx + r.errors_5xx;
+            const note = r.clients[0]?.error;
+            return (
+              <tr key={r.id} className="border-b border-gray-100 dark:border-navy-700/60 last:border-0">
+                <td className="py-2 pr-4 font-medium text-gray-900 dark:text-white">
+                  <a href={`#integrador-${r.id}`} className="hover:underline">{r.name}</a>
+                </td>
+                <td className="py-2 pr-4 font-mono text-xs text-gray-700 dark:text-gray-200">
+                  {r.ips.length ? r.ips.map((x) => x.ip).join(", ") : <span className={muted}>sin IPs</span>}
+                </td>
+                <td className={tdNum}>{num(r.requests)}</td>
+                <td className={tdNum}>{perMin(r.requests_per_min)}</td>
+                <td className={`${tdNum} ${r.errors_5xx ? "text-down font-medium" : ""}`}>{errs ? `${num(errs)} (${pctFmt(r.error_rate, 0)})` : "—"}</td>
+                <td className={`py-2 pr-4 text-xs ${note ? "text-down" : muted}`}>
+                  <span className="inline-flex items-center gap-1.5">
+                    {!note && <span className={`h-2 w-2 rounded-full ${r.requests ? "bg-up" : "bg-ink-3/50"}`} aria-hidden />}
+                    {note ?? ago(r.last_seen)}
+                  </span>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -257,12 +311,12 @@ export function IntegratorsCard({ clientId }: { clientId: number }) {
     <div>
       <div className="flex flex-wrap items-end justify-between gap-3 mb-3">
         <h3 className="text-sm font-semibold text-gray-900 dark:text-white">
-          Integradores <span className={`font-normal ${muted}`}>· tráfico de terceros identificados por IP</span>
+          Integradores <span className={`font-normal ${muted}`}>· terceros asociados a este cliente, tráfico por IP</span>
         </h3>
         <Segmented label="Ventana" value={minutes} onChange={setMinutes} options={WINDOWS} />
       </div>
       <TrafficBody live={live} minutes={minutes} single
-                   emptyHint={<p className={`text-sm ${muted}`}>No hay integradores cargados. Se dan de alta en Admin → Integradores.</p>} />
+                   emptyHint={<p className={`text-sm ${muted}`}>Este cliente no tiene integradores activos asociados. Se asocian en Admin → Integradores → Administrar.</p>} />
     </div>
   );
 }
@@ -301,7 +355,7 @@ function Monitor() {
         <div>
           <h2 className="font-semibold text-gray-900 dark:text-white">Monitor de integradores</h2>
           <p className={`text-sm ${muted}`}>
-            Requests de las IPs de cada integrador en todos los sitios con Cloudflare
+            Requests de las IPs de cada integrador en los clientes a los que está asociado
             {live.data?.configured ? ` · ${num(total)} en ${windowLabel(minutes)}` : ""}
             {live.data?.stale ? " · datos anteriores" : ""}
             {live.data ? ` · ${clock(live.data.generated_at)}` : ""}
@@ -320,8 +374,9 @@ function Monitor() {
   );
 }
 
-type Draft = { name: string; notes: string; active: boolean; ips: string };
-const EMPTY: Draft = { name: "", notes: "", active: true, ips: "" };
+type Draft = { name: string; notes: string; active: boolean; ips: string; client_ids: number[] };
+const EMPTY: Draft = { name: "", notes: "", active: true, ips: "", client_ids: [] };
+type ClientOpt = { id: number; name: string; site_host?: string | null };
 
 /** "100.25.27.248 Servidor prod" per line -> [{ip, label}]. Lines starting with # are ignored. */
 export function parseIps(text: string): IntegratorInput["ips"] {
@@ -335,10 +390,37 @@ export function parseIps(text: string): IntegratorInput["ips"] {
 const toDraft = (i: Integrator): Draft => ({
   name: i.name, notes: i.notes ?? "", active: i.active,
   ips: i.ips.map((x) => (x.label ? `${x.ip} ${x.label}` : x.ip)).join("\n"),
+  client_ids: i.clients.map((c) => c.id),
 });
 
-function IntegratorForm({ initial, onSave, onCancel, saving, error }: {
-  initial: Draft; onSave: (d: Draft) => void; onCancel?: () => void; saving: boolean; error: string;
+function ClientPicker({ clients, value, onChange }: { clients: ClientOpt[]; value: number[]; onChange: (v: number[]) => void }) {
+  const [q, setQ] = useState("");
+  const shown = clients.filter((c) => c.name.toLowerCase().includes(q.trim().toLowerCase()));
+  const toggle = (id: number) => onChange(value.includes(id) ? value.filter((x) => x !== id) : [...value, id]);
+  return (
+    <fieldset>
+      <legend className="field-label">
+        Clientes donde opera <span className={`font-normal ${muted}`}>· solo se busca su tráfico en estos ({value.length} {value.length === 1 ? "seleccionado" : "seleccionados"})</span>
+      </legend>
+      {clients.length > 8 && (
+        <input className="field w-full mb-2" type="search" placeholder="Buscar cliente" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Buscar cliente" />
+      )}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-4 gap-y-1 max-h-56 overflow-y-auto rounded-lg border border-gray-200 dark:border-navy-700 p-2">
+        {shown.map((c) => (
+          <label key={c.id} className="flex items-center gap-2 min-h-[32px] text-sm text-gray-700 dark:text-gray-200">
+            <input type="checkbox" className="h-4 w-4" checked={value.includes(c.id)} onChange={() => toggle(c.id)} />
+            <span className="truncate">{c.name}</span>
+            {!c.site_host && <span className="text-[11px] text-down whitespace-nowrap" title="Sin dominio: no se puede medir en Cloudflare">sin dominio</span>}
+          </label>
+        ))}
+        {shown.length === 0 && <p className={`text-sm ${muted} p-1`}>Ningún cliente coincide.</p>}
+      </div>
+    </fieldset>
+  );
+}
+
+function IntegratorForm({ initial, clients, onSave, onCancel, saving, error }: {
+  initial: Draft; clients: ClientOpt[]; onSave: (d: Draft) => void; onCancel?: () => void; saving: boolean; error: string;
 }) {
   const [d, setD] = useState(initial);
   const n = parseIps(d.ips).length;
@@ -359,6 +441,7 @@ function IntegratorForm({ initial, onSave, onCancel, saving, error }: {
         <textarea className="field w-full font-mono text-sm" rows={4} placeholder={"100.25.27.248 Servidor prod\n100.25.27.249"}
                   value={d.ips} onChange={(e) => setD({ ...d, ips: e.target.value })} />
       </label>
+      <ClientPicker clients={clients} value={d.client_ids} onChange={(client_ids) => setD({ ...d, client_ids })} />
       <label className="block">
         <span className="field-label">Notas <span className={`font-normal ${muted}`}>· qué consume, contacto, etc.</span></span>
         <textarea className="field w-full text-sm" rows={3} placeholder={"Consume BNA: api/v1/authenticate, api/v1/products/, api/v1/orders/"}
@@ -381,16 +464,23 @@ function Abm() {
   const [editing, setEditing] = useState<number | "new" | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [clients, setClients] = useState<ClientOpt[]>([]);
 
   const load = useCallback(async () => {
     setLoading(true);
     try { setItems(await getIntegrators()); } catch (e) { setError(extractError(e)); } finally { setLoading(false); }
   }, []);
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    if (!isAdmin) return;
+    getClients().then((cs) => setClients([...cs].sort((a, b) => a.name.localeCompare(b.name)))).catch(() => setClients([]));
+  }, [isAdmin]);
 
   async function save(id: number | null, d: Draft) {
     setSaving(true); setError("");
-    const body: IntegratorInput = { name: d.name.trim(), notes: d.notes.trim() || null, active: d.active, ips: parseIps(d.ips) };
+    const body: IntegratorInput = {
+      name: d.name.trim(), notes: d.notes.trim() || null, active: d.active, ips: parseIps(d.ips), client_ids: d.client_ids,
+    };
     try {
       if (id == null) await createIntegrator(body); else await updateIntegrator(id, body);
       setEditing(null); await load();
@@ -416,7 +506,7 @@ function Abm() {
 
       {editing === "new" && (
         <div className="rounded-xl border border-gray-200 dark:border-navy-700 p-4">
-          <IntegratorForm initial={EMPTY} onSave={(d) => save(null, d)} onCancel={() => setEditing(null)} saving={saving} error={error} />
+          <IntegratorForm initial={EMPTY} clients={clients} onSave={(d) => save(null, d)} onCancel={() => setEditing(null)} saving={saving} error={error} />
         </div>
       )}
 
@@ -427,7 +517,7 @@ function Abm() {
         {items.map((i) => (
           <li key={i.id} className="rounded-xl border border-gray-200 dark:border-navy-700 p-4">
             {editing === i.id ? (
-              <IntegratorForm initial={toDraft(i)} onSave={(d) => save(i.id, d)} onCancel={() => setEditing(null)} saving={saving} error={error} />
+              <IntegratorForm initial={toDraft(i)} clients={clients} onSave={(d) => save(i.id, d)} onCancel={() => setEditing(null)} saving={saving} error={error} />
             ) : (
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-0 space-y-2">
@@ -444,6 +534,12 @@ function Abm() {
                     ))}
                     {i.ips.length === 0 && <span className={`text-xs ${muted}`}>Sin IPs: no se puede detectar su tráfico</span>}
                   </div>
+                  <p className="text-sm text-gray-700 dark:text-gray-200">
+                    <span className={muted}>Clientes: </span>
+                    {i.clients.length
+                      ? i.clients.map((c) => c.name).join(", ")
+                      : <span className="text-down">ninguno, no se busca su tráfico</span>}
+                  </p>
                   {i.notes && <p className={`text-sm ${muted} whitespace-pre-line`}>{i.notes}</p>}
                 </div>
                 {isAdmin && (

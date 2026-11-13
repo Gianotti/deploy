@@ -1,5 +1,6 @@
-"""Integrators: third parties (e.g. Sincroshop) that call our sites from known IPs.
-CRUD is admin-only; the traffic monitor is for any logged-in user (never public)."""
+"""Integrators: third parties (e.g. Sincroshop) that call some clients' APIs from known IPs.
+Each integrator is linked to the clients (stores) it works with; traffic is only looked up there.
+CRUD is admin-only; the traffic monitor is for any logged-in user (and per client on /landing/[slug])."""
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
@@ -42,12 +43,23 @@ def _check_name(db: Session, name: str, own_id: int | None) -> None:
         raise HTTPException(400, "Ya existe un integrador con ese nombre")
 
 
+def _clients(db: Session, ids: list[int]) -> list[Client]:
+    if not ids:
+        return []
+    found = db.query(Client).filter(Client.id.in_(ids)).all()
+    missing = set(ids) - {c.id for c in found}
+    if missing:
+        raise HTTPException(400, f"Clientes inexistentes: {sorted(missing)}")
+    return found
+
+
 @router.post("/", response_model=IntegratorOut, dependencies=[Depends(require_admin)])
 def create_integrator(payload: IntegratorIn, db: Session = Depends(get_db)):
     _check_name(db, payload.name, None)
     _check_ips(db, payload, None)
     it = Integrator(name=payload.name, notes=payload.notes, active=payload.active,
-                    ips=[IntegratorIP(ip=x.ip, label=x.label) for x in payload.ips])
+                    ips=[IntegratorIP(ip=x.ip, label=x.label) for x in payload.ips],
+                    clients=_clients(db, payload.client_ids))
     db.add(it)
     db.commit()
     db.refresh(it)
@@ -62,6 +74,7 @@ def update_integrator(integrator_id: int, payload: IntegratorIn, db: Session = D
     _check_name(db, payload.name, it.id)
     _check_ips(db, payload, it.id)
     it.name, it.notes, it.active = payload.name, payload.notes, payload.active
+    it.clients = _clients(db, payload.client_ids)
     # Replace the IP list, keeping rows whose IP didn't change.
     wanted = {x.ip: x.label for x in payload.ips}
     for row in list(it.ips):
@@ -94,56 +107,61 @@ def integrator_traffic(
     db: Session = Depends(get_db),
     _=Depends(get_current_user),
 ):
-    """Requests from every active integrator's IPs, per site (Cloudflare), over the last `minutes`."""
+    """Requests from each active integrator's IPs on the sites of its linked clients (Cloudflare)."""
     return build_integrator_traffic(db, minutes, client_id)
 
 
 def build_integrator_traffic(db: Session, minutes: int, client_id: int | None, public: bool = False) -> dict:
-    """Shared by /integrators/traffic and /public/integrators. `public` hides raw error text."""
+    """Shared by /integrators/traffic and /public/integrators. With `client_id`, only the
+    integrators linked to that client. `public` hides raw error text."""
     from app.api.endpoints.cloudflare import get_cf_creds
 
     if minutes not in svc.WINDOWS:
         raise HTTPException(400, f"minutes debe ser uno de {list(svc.WINDOWS)}")
     integrators = db.query(Integrator).filter(Integrator.active.is_(True)).order_by(Integrator.name).all()
-    its = [{"id": i.id, "name": i.name, "active": i.active, "ips": [{"ip": x.ip, "label": x.label} for x in i.ips]}
-           for i in integrators]
-    owner = {x["ip"]: i["id"] for i in its for x in i["ips"]}
+    its, clients = [], {}
+    for i in integrators:
+        linked = [c for c in i.clients if client_id is None or c.id == client_id]
+        if client_id is not None and not linked:
+            continue
+        for c in linked:
+            clients[c.id] = c
+        its.append({"id": i.id, "name": i.name, "active": i.active,
+                    "ips": [{"ip": x.ip, "label": x.label} for x in i.ips],
+                    "client_ids": [c.id for c in linked]})
     base = {"generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"), "minutes": minutes}
     creds = get_cf_creds(db)
     if not creds:
         return {**base, "configured": False, "integrators": svc.group_by_integrator(its, [], minutes), "errors": []}
 
-    q = db.query(Client).filter(Client.site_host.isnot(None))
-    if client_id is not None:
-        q = q.filter(Client.id == client_id)
-    clients = q.order_by(Client.name).all()
-    # Two clients on the same host would double count: keep the first.
-    seen_hosts: set[str] = set()
-    targets = []
-    for c in clients:
-        h = cloudflare_service.normalize_host(c.site_host)
-        if h and h not in seen_hosts:
-            seen_hosts.add(h)
-            targets.append((c.id, c.name, h))
-
     bucket_dim, size = svc.bucket_for(minutes)
     buckets = svc.bucket_keys(datetime.now(timezone.utc), minutes, size)
-    ips = sorted(owner)
 
-    def fetch(t):
-        cid, name, host = t
-        row = {"client_id": cid, "client_name": name, "site_host": host, "by_integrator": {}, "error": None, "stale": False}
+    def fetch(c: Client) -> dict:
+        host = cloudflare_service.normalize_host(c.site_host) if c.site_host else None
+        row = {"client_id": c.id, "client_name": c.name, "site_host": host, "by_integrator": {}, "error": None, "stale": False}
+        # Only the IPs of the integrators linked to this client.
+        owner = {x["ip"]: i["id"] for i in its if c.id in i["client_ids"] for x in i["ips"]}
+        if not host:
+            row["error"] = "Sin dominio configurado (Admin → Clientes)"
+            return row
+        if not owner:
+            return row
         try:
-            raw = cloudflare_service.get_integrator_traffic(creds["account_id"], creds["api_token"], host, ips, minutes, bucket_dim)
+            raw = cloudflare_service.get_integrator_traffic(
+                creds["account_id"], creds["api_token"], host, sorted(owner), minutes, bucket_dim)
             if raw:
                 row["by_integrator"] = svc.summarize_zone(raw, owner, bucket_dim, buckets)
                 row["stale"] = bool(raw.get("stale"))
+            else:
+                row["error"] = f"{host} no está en ninguna zona de Cloudflare"
         except Exception as e:  # noqa: BLE001
-            row["error"] = str(e)[:200]
+            row["error"] = "Cloudflare no respondió" if public else str(e)[:200]
         return row
 
+    targets = sorted(clients.values(), key=lambda c: c.name)
     rows = []
-    if ips and targets:
+    if targets:
         with ThreadPoolExecutor(max_workers=max(1, min(len(targets), 8))) as pool:
             rows = list(pool.map(fetch, targets))
     return {
@@ -151,6 +169,6 @@ def build_integrator_traffic(db: Session, minutes: int, client_id: int | None, p
         "bucket_minutes": size,
         "stale": any(r["stale"] for r in rows),
         "integrators": svc.group_by_integrator(its, rows, minutes),
-        "errors": [{"client_id": r["client_id"], "client_name": r["client_name"],
-                    "error": "Cloudflare no respondió" if public else r["error"]} for r in rows if r["error"]],
+        "errors": [{"client_id": r["client_id"], "client_name": r["client_name"], "error": r["error"]}
+                   for r in rows if r["error"]],
     }

@@ -121,19 +121,30 @@ def summarize_zone(z: dict, owner: dict[str, int], bucket_dim: str, buckets: lis
     return out
 
 
+def _zero_client() -> dict:
+    return {"requests": 0, "bytes": 0, "cached": 0, "errors_4xx": 0, "errors_5xx": 0,
+            "ips": [], "paths": [], "series": [], "last_seen": None}
+
+
 def group_by_integrator(integrators: list[dict], client_rows: list[dict], minutes: int) -> list[dict]:
-    """integrators: [{id, name, active, ips: [{ip, label}]}];
-    client_rows: [{client_id, client_name, site_host, by_integrator: {id: summarize_zone() entry}}].
-    -> one entry per integrator with totals and its per-client breakdown, busiest first."""
+    """integrators: [{id, name, active, ips: [{ip, label}], client_ids: [id, ...]}] — the clients
+    each integrator is linked to; only those count.
+    client_rows: [{client_id, client_name, site_host, error, by_integrator: {id: summarize_zone() entry}}].
+    -> one entry per integrator with totals and one row per linked client (also the ones with no
+    traffic, carrying `error` when the site couldn't be measured), busiest first."""
+    rows_by_id = {r["client_id"]: r for r in client_rows}
     out = []
     for it in integrators:
         by_client = []
-        for r in client_rows:
-            s = (r.get("by_integrator") or {}).get(it["id"])
-            if s and s["requests"]:
-                by_client.append({"client_id": r["client_id"], "client_name": r["client_name"],
-                                  "site_host": r.get("site_host"), **{k: v for k, v in s.items() if k != "integrator_id"}})
-        by_client.sort(key=lambda c: -c["requests"])
+        for cid in it.get("client_ids", []):
+            r = rows_by_id.get(cid)
+            if not r:
+                continue
+            s = (r.get("by_integrator") or {}).get(it["id"]) or _zero_client()
+            by_client.append({"client_id": r["client_id"], "client_name": r["client_name"],
+                              "site_host": r.get("site_host"), "error": r.get("error"),
+                              **{k: v for k, v in s.items() if k != "integrator_id"}})
+        by_client.sort(key=lambda c: (-c["requests"], c["client_name"].lower()))
         req = sum(c["requests"] for c in by_client)
         e4 = sum(c["errors_4xx"] for c in by_client)
         e5 = sum(c["errors_5xx"] for c in by_client)
