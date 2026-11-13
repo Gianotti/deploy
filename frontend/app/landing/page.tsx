@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState, useCallback } from "react";
 import { getPublicStatus, getPublicTeams, type ClientStatus, type PublicTeam } from "@/lib/api";
 import PublicMonthCalendar from "@/components/PublicMonthCalendar";
+import { CloudflareAnalytics, useCloudflareLive } from "@/components/executive/cloudflare";
 import {
   BotIcon, ClientCard, LandingHeader, FOCUS, ORDER, REFRESH_SECS, STATUS, Status, StatusGlyph, StatusPill, clientSlug, n, verdict,
 } from "@/components/landing/parts";
@@ -240,6 +241,7 @@ export default function LandingPage() {
   const [error, setError] = useState(false);
   const [now, setNow] = useState(() => new Date());
   const [eco, setEco] = useState({ total: 0, peak: 0, mobilePct: 0, cr: 0 });
+  const cfLive = useCloudflareLive("public");
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -347,6 +349,8 @@ export default function LandingPage() {
             <section className="rounded-2xl border border-line bg-card p-5 sm:p-6">
               <PublicMonthCalendar />
             </section>
+
+            <CloudflareAnalytics live={cfLive} publicView />
           </>
         )}
 

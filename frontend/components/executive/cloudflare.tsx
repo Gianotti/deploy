@@ -10,7 +10,7 @@ import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { PAD, Tooltip, ticks, useScrub, useWidth } from "@/components/executive/charts";
 import { num, pctFmt, Section } from "@/components/executive/parts";
 import {
-  extractError, getExecutiveCloudflare,
+  extractError, getExecutiveCloudflare, getPublicCloudflare,
   type CfAnalytics, type CfClientRow, type ExecCloudflare,
 } from "@/lib/api";
 
@@ -18,12 +18,14 @@ import {
 
 export const CF_REFRESH_MS = 60_000;
 
-export function useCloudflareLive() {
+/** `source: "public"` uses the unauthenticated /public/cloudflare (for /landing). */
+export function useCloudflareLive(source: "executive" | "public" = "executive") {
   const [data, setData] = useState<ExecCloudflare | null>(null);
   const [error, setError] = useState<string | null>(null);
   const load = useCallback(() => {
-    getExecutiveCloudflare().then((d) => { setData(d); setError(null); }).catch((e) => setError(extractError(e)));
-  }, []);
+    (source === "public" ? getPublicCloudflare() : getExecutiveCloudflare())
+      .then((d) => { setData(d); setError(null); }).catch((e) => setError(extractError(e)));
+  }, [source]);
   useEffect(() => {
     load();
     const id = window.setInterval(() => { if (!document.hidden) load(); }, CF_REFRESH_MS);
@@ -295,7 +297,11 @@ function NoGa4() {
 
 // ── The section ─────────────────────────────────────────────────────────────
 
-export function CloudflareAnalytics({ live, clientId }: { live: ReturnType<typeof useCloudflareLive>; clientId?: number }) {
+export function CloudflareAnalytics({ live, clientId, publicView }: {
+  live: ReturnType<typeof useCloudflareLive>; clientId?: number;
+  /** Landing: no setup hints, nothing rendered when there's nothing to show. */
+  publicView?: boolean;
+}) {
   const { data, error } = live;
   const [open, setOpen] = useState<number | null>(null);
   const rows = useMemo(() => {
@@ -308,6 +314,13 @@ export function CloudflareAnalytics({ live, clientId }: { live: ReturnType<typeo
     ? `Consumo en vivo${clientId == null ? " de todos los sitios, también los que no tienen GA4" : ""}. Últimos ${data.window_minutes} min; el gráfico muestra la última hora. Se actualiza cada minuto.`
     : "Consumo en vivo y comportamiento de la caché.";
 
+  if (publicView) {
+    if (!data || !data.configured) return null;
+    if (clientId != null && !rows[0]?.data) return null;
+    if (clientId == null && !rows.some((r) => r.data)) return null;
+  }
+  const message = (r: CfClientRow) => (publicView ? "Sin datos de Cloudflare" : rowMessage(r));
+
   let body: React.ReactNode;
   if (error && !data) body = <p className="text-sm text-down">No se pudo cargar Cloudflare: {error}</p>;
   else if (!data) body = <div className="h-40 rounded-xl bg-gray-100 dark:bg-navy-700/40 animate-pulse" aria-busy />;
@@ -316,7 +329,7 @@ export function CloudflareAnalytics({ live, clientId }: { live: ReturnType<typeo
     const r = rows[0];
     body = !r ? <p className={`text-sm ${muted}`}>Cliente no encontrado.</p>
       : r.data ? <SiteDetail d={r.data} name={r.client_name} />
-      : <p className={`text-sm ${muted}`}>{rowMessage(r)}</p>;
+      : <p className={`text-sm ${muted}`}>{message(r)}</p>;
   } else {
     const eco = data.ecosystem;
     body = (
@@ -377,7 +390,7 @@ export function CloudflareAnalytics({ live, clientId }: { live: ReturnType<typeo
                           <td className={tdNum}>{d.health.origin_ms != null ? `${num(d.health.origin_ms)} ms` : "—"}</td>
                         </>
                       ) : (
-                        <td colSpan={8} className={`py-2 pr-4 text-sm ${muted}`}>{rowMessage(r)}</td>
+                        <td colSpan={8} className={`py-2 pr-4 text-sm ${muted}`}>{message(r)}</td>
                       )}
                     </tr>
                     {d && isOpen && (

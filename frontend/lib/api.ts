@@ -722,6 +722,11 @@ export async function getExecutiveCloudflare(): Promise<ExecCloudflare> {
   return (await api.get<ExecCloudflare>("/executive/cloudflare")).data;
 }
 
+/** Public copy for /landing: no auth, no paths, no raw error text. */
+export async function getPublicCloudflare(): Promise<ExecCloudflare> {
+  return (await api.get<ExecCloudflare>("/public/cloudflare")).data;
+}
+
 export interface ExecDigestConfig {
   enabled: boolean;
   webhook_url: string | null;

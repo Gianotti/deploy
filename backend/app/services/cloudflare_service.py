@@ -501,6 +501,12 @@ def summarize_analytics(z: dict, window_minutes: int = ANALYTICS_WINDOW) -> dict
     }
 
 
+def public_analytics(data: dict) -> dict:
+    """Pure: the copy of get_analytics() that may go to the public landing.
+    Drops the requested paths (they can reveal internal URLs and API routes)."""
+    return {**data, "top_paths": []}
+
+
 def ecosystem_analytics(rows: list[dict]) -> dict:
     """Pure: totals across clients. Rows sharing a host are counted once."""
     seen: set[str] = set()

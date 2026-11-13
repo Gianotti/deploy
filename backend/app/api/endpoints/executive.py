@@ -265,6 +265,12 @@ def cloudflare_live(db: Session = Depends(get_db), _=Depends(get_current_user)):
     """Live consumption and cache per client from Cloudflare (last 15 min, cached 60 s).
 
     Same for every client, including the ones without GA4 (e.g. embedded in another app)."""
+    return build_cloudflare_live(db)
+
+
+def build_cloudflare_live(db: Session, public: bool = False) -> dict:
+    """Shared by /executive/cloudflare and /public/cloudflare. With `public=True`
+    paths and raw error text are stripped (see cloudflare_service.public_analytics)."""
     from app.api.endpoints.cloudflare import get_cf_creds
 
     creds = get_cf_creds(db)
@@ -297,6 +303,11 @@ def cloudflare_live(db: Session = Depends(get_db), _=Depends(get_current_user)):
 
     with ThreadPoolExecutor(max_workers=max(1, min(len(targets), 8))) as pool:
         rows = list(pool.map(fetch, targets))
+    if public:
+        for r in rows:
+            r["error"] = None
+            if r["data"]:
+                r["data"] = cloudflare_service.public_analytics(r["data"])
     return {**base, "configured": True,
             "ecosystem": cloudflare_service.ecosystem_analytics([r["data"] for r in rows if r["data"]]),
             "clients": rows}

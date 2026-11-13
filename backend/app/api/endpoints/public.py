@@ -243,6 +243,15 @@ def _fetch_all_cloudflare(db: Session, clients: list) -> dict[int, dict]:
         return {cid: data for cid, data in pool.map(fetch, targets) if data is not None}
 
 
+@router.get("/cloudflare")
+def public_cloudflare(db: Session = Depends(get_db)):
+    """Live Cloudflare consumption and cache per client for /landing (no auth).
+    Same data as /executive/cloudflare minus paths and raw error text; no revenue."""
+    from app.api.endpoints.executive import build_cloudflare_live
+
+    return build_cloudflare_live(db, public=True)
+
+
 @router.get("/status", response_model=PublicStatusOut)
 def public_status(db: Session = Depends(get_db)):
     rules = db.query(DeployRule).all()

@@ -1,6 +1,6 @@
 """Unit tests for the Cloudflare live analytics summary (no network)."""
 
-from app.services.cloudflare_service import ecosystem_analytics, summarize_analytics
+from app.services.cloudflare_service import ecosystem_analytics, public_analytics, summarize_analytics
 
 
 def _g(count, status=None, bytes_=0, **dims):
@@ -56,6 +56,13 @@ def test_summary_paths_merge_cache_statuses_and_series_drop_partial_minutes():
 def test_summary_empty_zone_has_no_division_errors():
     s = summarize_analytics({"total": [], "cache": [], "status": [], "paths": [], "series": []}, 15)
     assert s["requests"] == 0 and s["cache"]["hit_ratio"] == 0.0 and s["visits"] is None
+
+
+def test_public_copy_drops_paths_and_keeps_the_rest():
+    s = {"host": "a.com", **summarize_analytics(RAW, 15)}
+    p = public_analytics(s)
+    assert p["top_paths"] == [] and s["top_paths"]  # original untouched
+    assert p["cache"] == s["cache"] and p["series"] == s["series"]
 
 
 def test_ecosystem_counts_shared_hosts_once():
