@@ -6,6 +6,7 @@ import { useEffect, useState, useCallback } from "react";
 import { getPublicStatus, type ClientStatus } from "@/lib/api";
 import { ClientDetail, FOCUS, LandingHeader, REFRESH_SECS, clientSlug } from "@/components/landing/parts";
 import { CloudflareAnalytics, useCloudflareLive } from "@/components/executive/cloudflare";
+import { PublicIntegrators } from "@/components/integrators";
 
 export default function ClientStatusPage() {
   const { slug } = useParams<{ slug: string }>();
@@ -102,6 +103,7 @@ export default function ClientStatusPage() {
 
         {client && <ClientDetail client={client} now={now} />}
         {client && <CloudflareAnalytics live={cfLive} clientId={client.client_id} publicView />}
+        {client && <PublicIntegrators clientId={client.client_id} />}
       </main>
     </div>
   );

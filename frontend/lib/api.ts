@@ -788,6 +788,9 @@ export async function getIntegratorTraffic(minutes: number, clientId?: number): 
   if (clientId != null) params.client_id = clientId;
   return (await api.get<IntegratorTraffic>("/integrators/traffic", { params })).data;
 }
+export async function getPublicIntegratorTraffic(minutes: number, clientId: number): Promise<IntegratorTraffic> {
+  return (await api.get<IntegratorTraffic>("/public/integrators", { params: { minutes, client_id: clientId } })).data;
+}
 
 export interface ExecDigestConfig {
   enabled: boolean;

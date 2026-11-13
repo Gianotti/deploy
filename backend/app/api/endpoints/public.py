@@ -252,6 +252,14 @@ def public_cloudflare(db: Session = Depends(get_db)):
     return build_cloudflare_live(db, public=True)
 
 
+@router.get("/integrators")
+def public_integrators(client_id: int, minutes: int = 60, db: Session = Depends(get_db)):
+    """Integrator traffic (by IP, via Cloudflare) for one client, for /landing/[slug] (no auth)."""
+    from app.api.endpoints.integrators import build_integrator_traffic
+
+    return build_integrator_traffic(db, minutes, client_id, public=True)
+
+
 @router.get("/status", response_model=PublicStatusOut)
 def public_status(db: Session = Depends(get_db)):
     rules = db.query(DeployRule).all()

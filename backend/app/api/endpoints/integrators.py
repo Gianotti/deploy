@@ -95,6 +95,11 @@ def integrator_traffic(
     _=Depends(get_current_user),
 ):
     """Requests from every active integrator's IPs, per site (Cloudflare), over the last `minutes`."""
+    return build_integrator_traffic(db, minutes, client_id)
+
+
+def build_integrator_traffic(db: Session, minutes: int, client_id: int | None, public: bool = False) -> dict:
+    """Shared by /integrators/traffic and /public/integrators. `public` hides raw error text."""
     from app.api.endpoints.cloudflare import get_cf_creds
 
     if minutes not in svc.WINDOWS:
@@ -146,5 +151,6 @@ def integrator_traffic(
         "bucket_minutes": size,
         "stale": any(r["stale"] for r in rows),
         "integrators": svc.group_by_integrator(its, rows, minutes),
-        "errors": [{"client_id": r["client_id"], "client_name": r["client_name"], "error": r["error"]} for r in rows if r["error"]],
+        "errors": [{"client_id": r["client_id"], "client_name": r["client_name"],
+                    "error": "Cloudflare no respondió" if public else r["error"]} for r in rows if r["error"]],
     }

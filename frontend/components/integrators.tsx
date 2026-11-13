@@ -12,7 +12,7 @@ import { num, pctFmt } from "@/components/executive/parts";
 import { fmtBytes } from "@/components/executive/cloudflare";
 import { useAuth } from "@/lib/auth";
 import {
-  createIntegrator, deleteIntegrator, extractError, getIntegrators, getIntegratorTraffic, updateIntegrator,
+  createIntegrator, deleteIntegrator, extractError, getIntegrators, getIntegratorTraffic, getPublicIntegratorTraffic, updateIntegrator,
   type Integrator, type IntegratorInput, type IntegratorTraffic, type IntegratorTrafficRow,
 } from "@/lib/api";
 
@@ -38,17 +38,17 @@ function ago(iso: string | null): string {
 
 // ── Data hook ────────────────────────────────────────────────────────────────
 
-export function useIntegratorTraffic(minutes: number, clientId?: number) {
+export function useIntegratorTraffic(minutes: number, clientId?: number, source: "auth" | "public" = "auth") {
   const [data, setData] = useState<IntegratorTraffic | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const load = useCallback(() => {
     setLoading(true);
-    getIntegratorTraffic(minutes, clientId)
+    (source === "public" && clientId != null ? getPublicIntegratorTraffic(minutes, clientId) : getIntegratorTraffic(minutes, clientId))
       .then((d) => { setData(d); setError(null); })
       .catch((e) => setError(extractError(e)))
       .finally(() => setLoading(false));
-  }, [minutes, clientId]);
+  }, [minutes, clientId, source]);
   useEffect(() => {
     load();
     const id = window.setInterval(() => { if (!document.hidden) load(); }, REFRESH_MS);
@@ -264,6 +264,28 @@ export function IntegratorsCard({ clientId }: { clientId: number }) {
       <TrafficBody live={live} minutes={minutes} single
                    emptyHint={<p className={`text-sm ${muted}`}>No hay integradores cargados. Se dan de alta en Admin → Integradores.</p>} />
     </div>
+  );
+}
+
+// ── Public section for /landing/[slug] ──────────────────────────────────────
+
+/** Same monitor as the card, unauthenticated; renders nothing until there is traffic to show. */
+export function PublicIntegrators({ clientId }: { clientId: number }) {
+  const [minutes, setMinutes] = useState(60);
+  const live = useIntegratorTraffic(minutes, clientId, "public");
+  const d = live.data;
+  if (!d || !d.configured || d.integrators.length === 0) return null;
+  return (
+    <section className="rounded-2xl border border-line bg-card p-5 sm:p-6">
+      <div className="flex flex-wrap items-end justify-between gap-3 mb-4">
+        <div>
+          <h2 className="text-[17px] font-semibold text-ink">Integradores</h2>
+          <p className="text-[13px] text-ink-2">Tráfico de terceros identificados por IP · se actualiza cada 2 min</p>
+        </div>
+        <Segmented label="Ventana" value={minutes} onChange={setMinutes} options={WINDOWS} />
+      </div>
+      <TrafficBody live={live} minutes={minutes} single emptyHint={null} />
+    </section>
   );
 }
 
