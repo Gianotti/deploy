@@ -12,8 +12,8 @@ import { num, pctFmt } from "@/components/executive/parts";
 import { fmtBytes } from "@/components/executive/cloudflare";
 import { useAuth } from "@/lib/auth";
 import {
-  createIntegrator, deleteIntegrator, extractError, getClients, getIntegrators, getIntegratorTraffic, getPublicIntegratorTraffic, updateIntegrator,
-  type Integrator, type IntegratorInput, type IntegratorTraffic, type IntegratorTrafficRow,
+  createIntegrator, deleteIntegrator, extractError, getClients, getIntegratorCallers, getIntegrators, getIntegratorTraffic, getPublicIntegratorTraffic, updateIntegrator,
+  type Integrator, type IntegratorCallers, type IntegratorInput, type IntegratorTraffic, type IntegratorTrafficRow,
 } from "@/lib/api";
 
 const muted = "text-gray-500 dark:text-gray-400";
@@ -134,7 +134,85 @@ function PathsTable({ c }: { c: IntegratorTrafficRow["clients"][number] }) {
 }
 
 /** One integrator: totals, activity, IPs, and per-site paths. */
-function IntegratorPanel({ row, minutes, single }: { row: IntegratorTrafficRow; minutes: number; single?: boolean }) {
+/** "¿Quién llama a /api/v1/* en este sitio?": every IP / UA hitting the integrator's consumed
+ *  paths anywhere in the client's zone, loaded when opened. Not on the public page (end-user IPs). */
+function CallersPanel({ row, client, minutes }: {
+  row: IntegratorTrafficRow; client: IntegratorTrafficRow["clients"][number]; minutes: number;
+}) {
+  const [open, setOpen] = useState(false);
+  const [data, setData] = useState<IntegratorCallers | null>(null);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const load = useCallback(async () => {
+    setLoading(true); setError("");
+    try { setData(await getIntegratorCallers(row.id, client.client_id, minutes)); }
+    catch (e) { setError(extractError(e)); } finally { setLoading(false); }
+  }, [row.id, client.client_id, minutes]);
+  useEffect(() => { if (open) load(); }, [open, load]);
+  const otherHosts = data?.hosts.filter((h) => !h.same_site) ?? [];
+  return (
+    <details className="rounded-lg bg-gray-50 dark:bg-navy-900/40 px-3 py-2 text-sm"
+             onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}>
+      <summary className="cursor-pointer text-gray-700 dark:text-gray-200">
+        ¿Quién llama a <span className="font-mono">{row.consumes.join(", ")}</span> en {client.client_name}?
+        <span className={`ml-1 ${muted}`}>· {windowLabel(minutes)}, cualquier IP o user-agent</span>
+      </summary>
+      <div className="pt-3 space-y-3">
+        {loading && !data && <div className="h-16 rounded bg-gray-100 dark:bg-navy-700/40 motion-safe:animate-pulse" aria-busy />}
+        {error && <p className="text-xs text-down">{error}</p>}
+        {data && (
+          <>
+            <p className={`text-xs ${muted}`}>
+              {data.total === 0
+                ? <>Nadie llamó a esos paths en la zona {data.zone} en {windowLabel(minutes)}. Revisá que el path esté bien escrito (distingue mayúsculas).</>
+                : <>{num(data.total)} requests en la zona {data.zone}: {num(data.on_site)} en {data.site_host} (lo que mira el monitor)
+                    {" "}y {num(data.known)} de IPs o user-agents ya cargados.{data.stale ? " Datos anteriores." : ""}</>}
+            </p>
+            {otherHosts.length > 0 && (
+              <p className="text-xs text-down">
+                También llegan a otro host: {otherHosts.map((h) => `${h.host} (${num(h.requests)})`).join(", ")}.
+                El monitor solo mira {data.site_host}: si la API está ahí, cambiá el dominio del cliente en Admin → Clientes.
+              </p>
+            )}
+            {data.callers.length > 0 && (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs text-left min-w-[560px]">
+                  <thead>
+                    <tr className="border-b border-gray-100 dark:border-navy-700">
+                      <th className={thCls}>IP</th><th className={thCls}>User-agent</th><th className={thCls}>Host</th>
+                      <th className={`${thCls} text-right`}>Requests</th><th className={thCls}>Integrador</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.callers.map((c, i) => (
+                      <tr key={i} className="border-b border-gray-100 dark:border-navy-700/60 last:border-0 align-top">
+                        <td className="py-1.5 pr-4 font-mono text-gray-700 dark:text-gray-200 whitespace-nowrap">{c.ip}</td>
+                        <td className="py-1.5 pr-4 font-mono text-gray-700 dark:text-gray-200 break-all">{c.user_agent || <span className={muted}>(vacío)</span>}</td>
+                        <td className={`py-1.5 pr-4 font-mono whitespace-nowrap ${c.same_site ? "text-gray-700 dark:text-gray-200" : "text-down"}`}>{c.host}</td>
+                        <td className={tdNum}>{num(c.requests)}</td>
+                        <td className="py-1.5 pr-4">
+                          {c.integrators.length
+                            ? <span className="text-gray-900 dark:text-white">{c.integrators.join(", ")}</span>
+                            : <span className={muted}>no cargado</span>}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            <div className="flex items-center gap-3">
+              <button type="button" onClick={load} disabled={loading} className="btn-secondary disabled:opacity-50">{loading ? "Buscando…" : "Volver a buscar"}</button>
+              <span className={`text-xs ${muted}`}>Para sumar una IP o user-agent al integrador, cargalo en Administrar.</span>
+            </div>
+          </>
+        )}
+      </div>
+    </details>
+  );
+}
+
+function IntegratorPanel({ row, minutes, single, diagnose }: { row: IntegratorTrafficRow; minutes: number; single?: boolean; diagnose?: boolean }) {
   const [open, setOpen] = useState<number | null>(single ? row.clients[0]?.client_id ?? null : null);
   const series = useMemo(() => sumSeries(row), [row]);
   const idle = row.requests === 0;
@@ -189,6 +267,10 @@ function IntegratorPanel({ row, minutes, single }: { row: IntegratorTrafficRow; 
           ? <>Solo cuenta requests a <span className="font-mono">{row.consumes.join(", ")}</span></>
           : "Cuenta cualquier path (no tiene paths cargados en “Paths que consume”)"}
       </p>
+
+      {diagnose && row.consumes?.length > 0 && row.clients.filter((c) => c.site_host).map((c) => (
+        <CallersPanel key={c.client_id} row={row} client={c} minutes={minutes} />
+      ))}
 
       {row.shared_requests > 0 && (
         <p className={`text-xs ${muted}`}>
@@ -292,8 +374,10 @@ function IntegratorPanel({ row, minutes, single }: { row: IntegratorTrafficRow; 
   );
 }
 
-function TrafficBody({ live, minutes, single, emptyHint }: {
+function TrafficBody({ live, minutes, single, emptyHint, diagnose }: {
   live: ReturnType<typeof useIntegratorTraffic>; minutes: number; single?: boolean; emptyHint: React.ReactNode;
+  /** Show "¿Quién llama…?" (logged-in views only). */
+  diagnose?: boolean;
 }) {
   const { data, error } = live;
   if (error && !data) return <p className="text-sm text-down">No se pudo cargar el tráfico de integradores: {error}</p>;
@@ -308,7 +392,7 @@ function TrafficBody({ live, minutes, single, emptyHint }: {
       )}
       {single && <ActiveList rows={rows} minutes={minutes} />}
       {single && <h4 className={`text-xs font-medium uppercase tracking-wide ${muted} pt-2`}>Detalle por integrador</h4>}
-      {rows.map((r) => <IntegratorPanel key={r.id} row={r} minutes={minutes} single={single} />)}
+      {rows.map((r) => <IntegratorPanel key={r.id} row={r} minutes={minutes} single={single} diagnose={diagnose} />)}
     </div>
   );
 }
@@ -376,7 +460,7 @@ export function IntegratorsCard({ clientId }: { clientId: number }) {
         </h3>
         <Segmented label="Ventana" value={minutes} onChange={setMinutes} options={WINDOWS} />
       </div>
-      <TrafficBody live={live} minutes={minutes} single
+      <TrafficBody live={live} minutes={minutes} single diagnose
                    emptyHint={<p className={`text-sm ${muted}`}>Este cliente no tiene integradores activos asociados. Se asocian en Admin → Integradores → Administrar.</p>} />
     </div>
   );
@@ -429,7 +513,7 @@ function Monitor() {
           </button>
         </div>
       </div>
-      <TrafficBody live={live} minutes={minutes}
+      <TrafficBody live={live} minutes={minutes} diagnose
                    emptyHint={<p className={`text-sm ${muted}`}>No hay integradores activos. Cargá uno en Administrar con sus IPs o user-agents.</p>} />
     </div>
   );

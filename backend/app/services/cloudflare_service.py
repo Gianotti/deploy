@@ -815,3 +815,43 @@ def get_analytics(account_id: str, token: str, site_host: str) -> dict | None:
         if cached:
             return {**cached[1], "stale": True}
         raise
+
+
+_CALLERS_QUERY = """query($z:String!,$f:ZoneHttpRequestsAdaptiveGroupsFilter_InputObject!){viewer{zones(filter:{zoneTag:$z}){
+  callers: httpRequestsAdaptiveGroups(limit:200,orderBy:[count_DESC],filter:$f){count dimensions{clientIP userAgent clientRequestHTTPHost}}
+}}}"""
+_callers_cache: dict[tuple, tuple[float, dict]] = {}
+
+
+def get_path_callers(account_id: str, token: str, site_host: str, paths: list[str], minutes: int) -> dict | None:
+    """Who calls `paths` (prefixes, `*` wildcard) anywhere in the site's zone over the last
+    `minutes`: rows of IP + User-Agent + host, busiest first. The whole zone, not only the site's
+    host, so an API served from another subdomain shows up. Admin diagnostic only: the rows include
+    end users' IPs. None if the host has no zone. Cached 2 min; stale on error."""
+    from app.services.integrators import path_like
+
+    host = normalize_host(site_host)
+    prefixes = sorted(set(paths or []))
+    if not host or not prefixes:
+        return None
+    zone = resolve_zone(host, list_zones(account_id, token))
+    if not zone:
+        return None
+    key = (zone["id"], tuple(prefixes), minutes)
+    cached = _callers_cache.get(key)
+    if cached and time.time() - cached[0] < 120:
+        return cached[1]
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    where = [{"clientRequestPath_like": path_like(p)} for p in prefixes]
+    f = {**_window(now, minutes, None), **(where[0] if len(where) == 1 else {"OR": where})}
+    try:
+        d = _graphql(token, _CALLERS_QUERY, {"z": zone["id"], "f": f})
+        if d.get("errors") or not d.get("data"):
+            raise RuntimeError(f"Cloudflare GraphQL: {d.get('errors')}")
+        data = {"zone": zone["name"], "host": host, "rows": d["data"]["viewer"]["zones"][0].get("callers") or []}
+        _callers_cache[key] = (time.time(), data)
+        return data
+    except Exception:
+        if cached:
+            return {**cached[1], "stale": True}
+        raise

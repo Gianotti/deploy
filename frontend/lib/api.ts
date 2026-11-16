@@ -811,6 +811,17 @@ export async function getIntegratorTraffic(minutes: number, clientId?: number): 
   if (clientId != null) params.client_id = clientId;
   return (await api.get<IntegratorTraffic>("/integrators/traffic", { params })).data;
 }
+/** Who calls an integrator's consumed paths in a client's zone (any IP / UA / host). Auth only. */
+export interface IntegratorCallers {
+  integrator_id: number; client_id: number; minutes: number; paths: string[];
+  site_host: string | null; zone: string; stale: boolean;
+  total: number; on_site: number; known: number;
+  hosts: { host: string; requests: number; same_site: boolean }[];
+  callers: { ip: string; user_agent: string; host: string; same_site: boolean; requests: number; integrators: string[] }[];
+}
+export async function getIntegratorCallers(integratorId: number, clientId: number, minutes: number): Promise<IntegratorCallers> {
+  return (await api.get<IntegratorCallers>(`/integrators/${integratorId}/callers`, { params: { client_id: clientId, minutes } })).data;
+}
 export async function getPublicIntegratorTraffic(minutes: number, clientId: number): Promise<IntegratorTraffic> {
   return (await api.get<IntegratorTraffic>("/public/integrators", { params: { minutes, client_id: clientId } })).data;
 }

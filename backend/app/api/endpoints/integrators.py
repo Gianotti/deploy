@@ -122,6 +122,49 @@ def integrator_traffic(
     return build_integrator_traffic(db, minutes, client_id)
 
 
+@router.get("/{integrator_id}/callers")
+def integrator_path_callers(
+    integrator_id: int,
+    client_id: int = Query(...),
+    minutes: int = Query(60),
+    db: Session = Depends(get_db),
+    _=Depends(get_current_user),
+):
+    """Diagnostic: who calls the paths this integrator consumes in a client's zone (any IP /
+    User-Agent, any host of the zone), and which registered integrator each one is. Never public:
+    it lists end users' IPs."""
+    from app.api.endpoints.cloudflare import get_cf_creds
+
+    if minutes not in svc.WINDOWS:
+        raise HTTPException(400, f"minutes debe ser uno de {list(svc.WINDOWS)}")
+    it = db.get(Integrator, integrator_id)
+    client = db.get(Client, client_id)
+    if not it or not client:
+        raise HTTPException(404, "Integrador o cliente no encontrado")
+    prefixes = svc.split_consumes(it.consumes)
+    base = {"integrator_id": it.id, "client_id": client.id, "minutes": minutes, "paths": prefixes,
+            "site_host": cloudflare_service.normalize_host(client.site_host) if client.site_host else None}
+    if not prefixes:
+        raise HTTPException(400, "El integrador no tiene paths cargados en “Paths que consume”")
+    if not base["site_host"]:
+        raise HTTPException(400, "El cliente no tiene dominio configurado (Admin → Clientes)")
+    creds = get_cf_creds(db)
+    if not creds:
+        raise HTTPException(400, "Cloudflare no está configurado")
+    try:
+        raw = cloudflare_service.get_path_callers(creds["account_id"], creds["api_token"], base["site_host"], prefixes, minutes)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"Cloudflare: {str(e)[:200]}")
+    if not raw:
+        raise HTTPException(400, f"{base['site_host']} no está en ninguna zona de Cloudflare")
+    every = db.query(Integrator).all()
+    owner = {x.ip: i.id for i in every for x in i.ips}
+    ua_owner = [(x.pattern, i.id) for i in every for x in i.user_agents]
+    names = {i.id: i.name for i in every}
+    return {**base, "zone": raw["zone"], "stale": bool(raw.get("stale")),
+            **svc.summarize_callers(raw["rows"], base["site_host"], owner, ua_owner, names)}
+
+
 def build_integrator_traffic(db: Session, minutes: int, client_id: int | None, public: bool = False) -> dict:
     """Shared by /integrators/traffic and /public/integrators. With `client_id`, only the
     integrators linked to that client. `public` hides raw error text."""

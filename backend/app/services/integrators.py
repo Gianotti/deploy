@@ -329,3 +329,34 @@ def group_by_integrator(integrators: list[dict], client_rows: list[dict], minute
         })
     out.sort(key=lambda e: (-e["requests"], e["name"].lower()))
     return out
+
+
+TOP_CALLERS = 30
+
+
+def summarize_callers(rows: list[dict], site_host: str, owner: dict[str, int],
+                      ua_owner: list[tuple[str, int]], names: dict[int, str]) -> dict:
+    """Cloudflare `callers` rows (IP + User-Agent + host, for requests to some paths) -> who they
+    are: each row says which registered integrators its IP / User-Agent belongs to (ignoring
+    paths) and whether it hit the client's own host or another one in the zone (e.g. api.*)."""
+    resolve = make_resolver(owner, ua_owner)
+    site = {site_host, "www." + site_host}
+    total = on_site = known = 0
+    hosts: dict[str, int] = {}
+    callers = []
+    for g in rows:
+        d, n = g.get("dimensions") or {}, g.get("count") or 0
+        host = (d.get("clientRequestHTTPHost") or "").lower()
+        ids = sorted({i for i, _ in resolve(d.get("clientIP") or "", d.get("userAgent") or "")})
+        total += n
+        on_site += n if host in site else 0
+        known += n if ids else 0
+        hosts[host] = hosts.get(host, 0) + n
+        callers.append({"ip": d.get("clientIP") or "", "user_agent": d.get("userAgent") or "", "host": host,
+                        "same_site": host in site, "requests": n,
+                        "integrators": [names.get(i, f"#{i}") for i in ids]})
+    return {
+        "total": total, "on_site": on_site, "known": known,
+        "hosts": [{"host": h, "requests": n, "same_site": h in site} for h, n in _ranked(hosts)],
+        "callers": callers[:TOP_CALLERS],
+    }

@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 import pytest
 
 from app.services.integrators import (bucket_for, bucket_keys, group_by_integrator, normalize_ip, normalize_path_prefix,
-                                      normalize_ua_pattern, path_like, path_matcher, paths_from_text,
+                                      normalize_ua_pattern, path_like, path_matcher, paths_from_text, summarize_callers,
                                       summarize_zone, ua_like)
 
 
@@ -156,6 +156,19 @@ def test_summarize_zone_only_counts_consumed_paths():
     assert out[2]["requests"] == 3 and [p["path"] for p in out[2]["paths"]] == ["/api/v1/orders/:id"]
     # No prefixes = any path (previous behaviour).
     assert summarize_zone(z, owner, "datetimeMinute", ["t1"])[1]["requests"] == 19
+
+
+def test_summarize_callers_flags_known_integrators_and_other_hosts():
+    def row(n, ip, ua, host):
+        return {"count": n, "dimensions": {"clientIP": ip, "userAgent": ua, "clientRequestHTTPHost": host}}
+    rows = [row(50, "9.9.9.9", "okhttp/4", "api.bna.com.ar"),          # API on another subdomain
+            row(20, "1.1.1.1", "curl/8", "bna.com.ar"),                # registered IP
+            row(5, "8.8.8.8", "Mozilla AcmeSDK/2", "www.bna.com.ar")]  # registered UA, www counts as the site
+    out = summarize_callers(rows, "bna.com.ar", {"1.1.1.1": 1}, [("AcmeSDK/", 2)], {1: "Sincro", 2: "Acme"})
+    assert (out["total"], out["on_site"], out["known"]) == (75, 25, 25)
+    assert out["hosts"][0] == {"host": "api.bna.com.ar", "requests": 50, "same_site": False}
+    assert [c["integrators"] for c in out["callers"]] == [[], ["Sincro"], ["Acme"]]
+    assert out["callers"][0]["same_site"] is False and out["callers"][2]["same_site"] is True
 
 
 def test_buckets():
