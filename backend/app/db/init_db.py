@@ -66,6 +66,10 @@ def _patch_missing_columns() -> None:
         if has_table("integrators") and "consumes" not in existing_cols("integrators"):
             conn.execute(text("ALTER TABLE integrators ADD COLUMN consumes TEXT"))
             print("  → integrators.consumes added")
+        # Extra API hosts per client for the integrator monitor (migration 012).
+        if has_table("clients") and "api_hosts" not in existing_cols("clients"):
+            conn.execute(text("ALTER TABLE clients ADD COLUMN api_hosts TEXT"))
+            print("  → clients.api_hosts added")
 
         # A User-Agent may be shared by several integrators (migration 010).
         if has_table("integrator_user_agents"):

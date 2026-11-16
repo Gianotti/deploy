@@ -56,6 +56,8 @@ export interface Client {
   ga4_property_id: string | null;
   user_threshold: number | null;
   site_host?: string | null;
+  /** Extra hosts the integrator monitor also looks at (e.g. an API on another domain). */
+  api_hosts?: string[];
   has_logo?: boolean;
   logo_filename?: string | null;
 }

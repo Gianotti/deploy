@@ -37,7 +37,8 @@ def get_client(client_id: int, db: Session = Depends(get_db), _=Depends(get_curr
 
 @router.post("/", response_model=ClientOut, dependencies=[Depends(require_admin)])
 def create_client(payload: ClientCreate, db: Session = Depends(get_db)):
-    client = Client(**{**payload.model_dump(), "site_host": normalize_host(payload.site_host)})
+    client = Client(**{**payload.model_dump(), "site_host": normalize_host(payload.site_host),
+                       "api_hosts": "\n".join(payload.api_hosts) or None})
     db.add(client)
     try:
         db.commit()
@@ -59,6 +60,8 @@ def update_client(client_id: int, payload: ClientUpdate, db: Session = Depends(g
             continue
         if field == "site_host":
             value = normalize_host(value)
+        if field == "api_hosts":
+            value = "\n".join(value or []) or None
         setattr(c, field, value)
     db.commit()
     db.refresh(c)

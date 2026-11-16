@@ -169,6 +169,21 @@ def test_summarize_callers_flags_known_integrators_and_other_hosts():
     assert out["hosts"][0] == {"host": "api.bna.com.ar", "requests": 50, "same_site": False}
     assert [c["integrators"] for c in out["callers"]] == [[], ["Sincro"], ["Acme"]]
     assert out["callers"][0]["same_site"] is False and out["callers"][2]["same_site"] is True
+    # The API host registered on the client counts as monitored.
+    out = summarize_callers(rows, ["bna.com.ar", "api.bna.com.ar"], {}, [], {})
+    assert out["on_site"] == 75 and all(h["same_site"] for h in out["hosts"])
+
+
+def test_clean_hosts():
+    from app.schemas.client import clean_hosts, split_hosts
+    assert clean_hosts("https://api-bna.avenida.com/v1, www.foo.com.ar\napi-bna.avenida.com") == \
+        ["api-bna.avenida.com", "foo.com.ar"]
+    assert split_hosts("a.com\nb.com") == ["a.com", "b.com"] and split_hosts(None) == []
+    try:
+        clean_hosts("localhost")
+        raise AssertionError("should fail")
+    except ValueError:
+        pass
 
 
 def test_buckets():

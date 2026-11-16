@@ -83,7 +83,7 @@ export async function createClient(data: { name: string; country_id: number }): 
   return (await api.post<Client>("/clients/", data)).data;
 }
 
-export async function updateClient(id: number, data: Partial<{ name: string; country_id: number; user_threshold: number | null; site_host: string | null }>): Promise<Client> {
+export async function updateClient(id: number, data: Partial<{ name: string; country_id: number; user_threshold: number | null; site_host: string | null; api_hosts: string[] }>): Promise<Client> {
   return (await api.patch<Client>(`/clients/${id}`, data)).data;
 }
 
@@ -763,6 +763,8 @@ export interface IntegratorPathRow {
 }
 export interface IntegratorClientTraffic {
   client_id: number; client_name: string; site_host: string | null;
+  /** Site + API hosts the monitor looks at. */
+  hosts?: string[];
   /** Why this linked site couldn't be measured (no domain, no zone, Cloudflare error). */
   error?: string | null;
   requests: number; bytes: number; cached: number; errors_4xx: number; errors_5xx: number;
@@ -815,6 +817,8 @@ export async function getIntegratorTraffic(minutes: number, clientId?: number): 
 export interface IntegratorCallers {
   integrator_id: number; client_id: number; minutes: number; paths: string[];
   site_host: string | null; zone: string; stale: boolean;
+  /** Site + API hosts the monitor looks at; zones queried; per-host errors that didn't stop the rest. */
+  monitored_hosts: string[]; zones: string[]; errors: string[];
   total: number; on_site: number; known: number;
   hosts: { host: string; requests: number; same_site: boolean }[];
   callers: { ip: string; user_agent: string; host: string; same_site: boolean; requests: number; integrators: string[] }[];

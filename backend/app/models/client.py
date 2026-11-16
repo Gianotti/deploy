@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, ForeignKey, LargeBinary
+from sqlalchemy import Column, Integer, String, ForeignKey, LargeBinary, Text
 from sqlalchemy.orm import relationship
 
 from app.db.base import Base
@@ -13,6 +13,9 @@ class Client(Base):
     ga4_property_id = Column(String, nullable=True)
     user_threshold = Column(Integer, nullable=True)  # block deploy if active users >= this
     site_host = Column(String, nullable=True)  # e.g. "tiendamacro.com.ar" — matched to a Cloudflare zone
+    # Extra hosts the integrator monitor also looks at (newline-separated), e.g. an API served
+    # from another domain: "api-bna.avenida.com". Each one is matched to its own Cloudflare zone.
+    api_hosts = Column(Text, nullable=True)
     logo_data = Column(LargeBinary, nullable=True)
     logo_filename = Column(String, nullable=True)
 

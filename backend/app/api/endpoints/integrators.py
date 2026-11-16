@@ -11,11 +11,22 @@ from app.api.deps import get_current_user, require_admin
 from app.db.base import get_db
 from app.models.client import Client
 from app.models.integrator import Integrator, IntegratorIP, IntegratorUserAgent
+from app.schemas.client import split_hosts
 from app.schemas.integrator import IntegratorIn, IntegratorOut
 from app.services import cloudflare_service
 from app.services import integrators as svc
 
 router = APIRouter(prefix="/integrators", tags=["integrators"])
+
+
+def monitored_hosts(c: Client) -> list[str]:
+    """The client's site plus its extra API hosts (Admin → Cloudflare), deduped, site first."""
+    out: list[str] = []
+    for h in [c.site_host, *split_hosts(c.api_hosts)]:
+        h = cloudflare_service.normalize_host(h) if h else None
+        if h and h not in out:
+            out.append(h)
+    return out
 
 
 @router.get("/", response_model=list[IntegratorOut])
@@ -142,27 +153,40 @@ def integrator_path_callers(
     if not it or not client:
         raise HTTPException(404, "Integrador o cliente no encontrado")
     prefixes = svc.split_consumes(it.consumes)
+    hosts = monitored_hosts(client)
     base = {"integrator_id": it.id, "client_id": client.id, "minutes": minutes, "paths": prefixes,
-            "site_host": cloudflare_service.normalize_host(client.site_host) if client.site_host else None}
+            "site_host": hosts[0] if hosts else None, "monitored_hosts": hosts}
     if not prefixes:
         raise HTTPException(400, "El integrador no tiene paths cargados en “Paths que consume”")
-    if not base["site_host"]:
-        raise HTTPException(400, "El cliente no tiene dominio configurado (Admin → Clientes)")
+    if not hosts:
+        raise HTTPException(400, "El cliente no tiene dominio configurado (Admin → Cloudflare)")
     creds = get_cf_creds(db)
     if not creds:
         raise HTTPException(400, "Cloudflare no está configurado")
-    try:
-        raw = cloudflare_service.get_path_callers(creds["account_id"], creds["api_token"], base["site_host"], prefixes, minutes)
-    except Exception as e:  # noqa: BLE001
-        raise HTTPException(502, f"Cloudflare: {str(e)[:200]}")
-    if not raw:
-        raise HTTPException(400, f"{base['site_host']} no está en ninguna zona de Cloudflare")
+    # One query per zone (the site and an API host may live in different zones).
+    zones, rows, errors, stale, cf_failed = [], [], [], False, False
+    for h in hosts:
+        try:
+            raw = cloudflare_service.get_path_callers(creds["account_id"], creds["api_token"], h, prefixes, minutes)
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"{h}: Cloudflare: {str(e)[:200]}")
+            cf_failed = True
+            continue
+        if not raw:
+            errors.append(f"{h} no está en ninguna zona de Cloudflare")
+        elif raw["zone"] not in zones:
+            zones.append(raw["zone"])
+            rows += raw["rows"]
+            stale = stale or bool(raw.get("stale"))
+    if not zones:
+        raise HTTPException(502 if cf_failed else 400, "; ".join(errors))
     every = db.query(Integrator).all()
     owner = {x.ip: i.id for i in every for x in i.ips}
     ua_owner = [(x.pattern, i.id) for i in every for x in i.user_agents]
     names = {i.id: i.name for i in every}
-    return {**base, "zone": raw["zone"], "stale": bool(raw.get("stale")),
-            **svc.summarize_callers(raw["rows"], base["site_host"], owner, ua_owner, names)}
+    rows.sort(key=lambda g: -(g.get("count") or 0))
+    return {**base, "zone": ", ".join(zones), "zones": zones, "stale": stale, "errors": errors,
+            **svc.summarize_callers(rows, hosts, owner, ua_owner, names)}
 
 
 def build_integrator_traffic(db: Session, minutes: int, client_id: int | None, public: bool = False) -> dict:
@@ -194,8 +218,10 @@ def build_integrator_traffic(db: Session, minutes: int, client_id: int | None, p
     buckets = svc.bucket_keys(datetime.now(timezone.utc), minutes, size)
 
     def fetch(c: Client) -> dict:
-        host = cloudflare_service.normalize_host(c.site_host) if c.site_host else None
-        row = {"client_id": c.id, "client_name": c.name, "site_host": host, "by_integrator": {}, "error": None, "stale": False}
+        hosts = monitored_hosts(c)
+        host = hosts[0] if hosts else None
+        row = {"client_id": c.id, "client_name": c.name, "site_host": host, "hosts": hosts,
+               "by_integrator": {}, "error": None, "stale": False}
         # Only the IPs / User-Agents of the integrators linked to this client.
         mine = [i for i in its if c.id in i["client_ids"]]
         owner = {x["ip"]: i["id"] for i in mine for x in i["ips"]}
@@ -209,17 +235,23 @@ def build_integrator_traffic(db: Session, minutes: int, client_id: int | None, p
             return row
         if not owner and not ua_owner:
             return row
-        try:
-            raw = cloudflare_service.get_integrator_traffic(
-                creds["account_id"], creds["api_token"], host, sorted(owner), minutes, bucket_dim,
-                user_agents=sorted({p for p, _ in ua_owner}), paths=cf_paths, path_dim=bool(path_owner))
-            if raw:
-                row["by_integrator"] = svc.summarize_zone(raw, owner, bucket_dim, buckets, ua_owner, path_owner)
-                row["stale"] = bool(raw.get("stale"))
-            else:
-                row["error"] = f"{host} no está en ninguna zona de Cloudflare"
-        except Exception as e:  # noqa: BLE001
-            row["error"] = "Cloudflare no respondió" if public else str(e)[:200]
+        # Each host (site + API hosts) is queried in its own zone; the rows are added together.
+        merged, errors = {"paths": [], "series": []}, []
+        for h in hosts:
+            try:
+                raw = cloudflare_service.get_integrator_traffic(
+                    creds["account_id"], creds["api_token"], h, sorted(owner), minutes, bucket_dim,
+                    user_agents=sorted({p for p, _ in ua_owner}), paths=cf_paths, path_dim=bool(path_owner))
+                if raw:
+                    merged["paths"] += raw["paths"]
+                    merged["series"] += raw["series"]
+                    row["stale"] = row["stale"] or bool(raw.get("stale"))
+                else:
+                    errors.append(f"{h} no está en ninguna zona de Cloudflare")
+            except Exception as e:  # noqa: BLE001
+                errors.append(f"{h}: Cloudflare no respondió" if public else f"{h}: {str(e)[:200]}")
+        row["by_integrator"] = svc.summarize_zone(merged, owner, bucket_dim, buckets, ua_owner, path_owner)
+        row["error"] = "; ".join(errors) or None
         return row
 
     targets = sorted(clients.values(), key=lambda c: c.name)

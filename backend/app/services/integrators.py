@@ -290,6 +290,7 @@ def group_by_integrator(integrators: list[dict], client_rows: list[dict], minute
             s = (r.get("by_integrator") or {}).get(it["id"]) or _zero_client()
             by_client.append({"client_id": r["client_id"], "client_name": r["client_name"],
                               "site_host": r.get("site_host"), "error": r.get("error"),
+                              "hosts": r.get("hosts") or ([r["site_host"]] if r.get("site_host") else []),
                               **{k: v for k, v in s.items() if k != "integrator_id"}})
         by_client.sort(key=lambda c: (-c["requests"], c["client_name"].lower()))
         req = sum(c["requests"] for c in by_client)
@@ -334,13 +335,14 @@ def group_by_integrator(integrators: list[dict], client_rows: list[dict], minute
 TOP_CALLERS = 30
 
 
-def summarize_callers(rows: list[dict], site_host: str, owner: dict[str, int],
+def summarize_callers(rows: list[dict], hosts: str | list[str], owner: dict[str, int],
                       ua_owner: list[tuple[str, int]], names: dict[int, str]) -> dict:
     """Cloudflare `callers` rows (IP + User-Agent + host, for requests to some paths) -> who they
     are: each row says which registered integrators its IP / User-Agent belongs to (ignoring
-    paths) and whether it hit the client's own host or another one in the zone (e.g. api.*)."""
+    paths) and whether it hit a host the monitor looks at (`hosts`: the client's site + its API
+    hosts, `www.` included) or another one in the zone (e.g. api.*)."""
     resolve = make_resolver(owner, ua_owner)
-    site = {site_host, "www." + site_host}
+    site = {x for h in ([hosts] if isinstance(hosts, str) else hosts) for x in (h, "www." + h)}
     total = on_site = known = 0
     hosts: dict[str, int] = {}
     callers = []

@@ -1053,6 +1053,7 @@ function CloudflareTab() {
   const [zones, setZones] = useState<CloudflareZone[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [hosts, setHosts] = useState<Record<number, string>>({});
+  const [apiHosts, setApiHosts] = useState<Record<number, string>>({});
   const [saving, setSaving] = useState<number | "creds" | null>(null);
   const [traffic, setTraffic] = useState<Record<number, CloudflareTraffic | string>>({});
   const [error, setError] = useState("");
@@ -1062,8 +1063,9 @@ function CloudflareTab() {
     getClients().then(cs => {
       setClients(cs);
       const map: Record<number, string> = {};
-      cs.forEach(c => { map[c.id] = c.site_host ?? ""; });
-      setHosts(map);
+      const api: Record<number, string> = {};
+      cs.forEach(c => { map[c.id] = c.site_host ?? ""; api[c.id] = (c.api_hosts ?? []).join(", "); });
+      setHosts(map); setApiHosts(api);
     });
   }
 
@@ -1099,8 +1101,10 @@ function CloudflareTab() {
     setSaving(clientId); setError("");
     try {
       const host = (value ?? hosts[clientId] ?? "").trim() || null;
-      const updated = await updateClient(clientId, { site_host: host });
+      const extra = (apiHosts[clientId] ?? "").split(/[\s,;]+/).filter(Boolean);
+      const updated = await updateClient(clientId, { site_host: host, api_hosts: extra });
       setHosts(h => ({ ...h, [clientId]: updated.site_host ?? "" }));
+      setApiHosts(h => ({ ...h, [clientId]: (updated.api_hosts ?? []).join(", ") }));
       setClients(cs => cs.map(c => c.id === clientId ? updated : c));
       flash("Dominio actualizado ✅");
     } catch (err: any) { setError(extractError(err)); }
@@ -1162,7 +1166,8 @@ function CloudflareTab() {
         <h2 className="font-semibold text-gray-900 dark:text-white">Dominio por cliente</h2>
         <p className="text-sm text-gray-500 dark:text-gray-400">
           El dominio de la tienda (ej. <span className="font-mono bg-gray-100 dark:bg-navy-700 px-1 rounded">tiendamacro.com.ar</span>).
-          Si es el dominio de la zona se mira toda la zona; si es un subdominio, solo ese host. La landing muestra las IPs de los bots detectados; las IPs de usuarios reales no se muestran nunca.
+          Si es el dominio de la zona se mira toda la zona; si es un subdominio, solo ese host.
+          En <strong>Hosts de API</strong> sumá los hosts donde los integradores llaman a la API de esa tienda (ej. <span className="font-mono bg-gray-100 dark:bg-navy-700 px-1 rounded">api-bna.avenida.com</span>), aunque estén en otra zona: el monitor de integradores los mira además del dominio. La landing muestra las IPs de los bots detectados; las IPs de usuarios reales no se muestran nunca.
         </p>
         {status?.configured && error && <p className="text-red-500 text-sm">{error}</p>}
         {status?.configured && msg && <p className="text-green-500 text-sm">{msg}</p>}
@@ -1190,6 +1195,13 @@ function CloudflareTab() {
                       {t === "loading" ? "Consultando..." : "Ver bots"}
                     </button>
                   )}
+                </div>
+                <div className="ml-44 flex items-center gap-2">
+                  <label htmlFor={`api-hosts-${c.id}`} className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">Hosts de API</label>
+                  <input id={`api-hosts-${c.id}`} className="field flex-1 min-w-0 font-mono text-xs py-1.5" list="cf-zones"
+                    placeholder="api-tienda.otrodominio.com (opcional, separá con coma)"
+                    value={apiHosts[c.id] ?? ""} onChange={e => setApiHosts({ ...apiHosts, [c.id]: e.target.value })}
+                    onKeyDown={e => { if (e.key === "Enter") handleSaveHost(c.id); }} />
                 </div>
                 {suggestion && (
                   <p className="ml-44 text-xs text-gray-500 dark:text-gray-400">

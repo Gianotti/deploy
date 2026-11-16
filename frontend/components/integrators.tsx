@@ -165,13 +165,14 @@ function CallersPanel({ row, client, minutes }: {
             <p className={`text-xs ${muted}`}>
               {data.total === 0
                 ? <>Nadie llamó a esos paths en la zona {data.zone} en {windowLabel(minutes)}. Revisá que el path esté bien escrito (distingue mayúsculas).</>
-                : <>{num(data.total)} requests en la zona {data.zone}: {num(data.on_site)} en {data.site_host} (lo que mira el monitor)
+                : <>{num(data.total)} requests en {data.zones.length > 1 ? "las zonas" : "la zona"} {data.zone}: {num(data.on_site)} en {data.monitored_hosts.join(", ")} (lo que mira el monitor)
                     {" "}y {num(data.known)} de IPs o user-agents ya cargados.{data.stale ? " Datos anteriores." : ""}</>}
             </p>
+            {data.errors.length > 0 && <p className="text-xs text-down">{data.errors.join(" · ")}</p>}
             {otherHosts.length > 0 && (
               <p className="text-xs text-down">
                 También llegan a otro host: {otherHosts.map((h) => `${h.host} (${num(h.requests)})`).join(", ")}.
-                El monitor solo mira {data.site_host}: si la API está ahí, cambiá el dominio del cliente en Admin → Clientes.
+                El monitor solo mira {data.monitored_hosts.join(", ")}: si la API está ahí, sumalo en “Hosts de API” del cliente (Admin → Cloudflare).
               </p>
             )}
             {data.callers.length > 0 && (
@@ -348,7 +349,7 @@ function IntegratorPanel({ row, minutes, single, diagnose }: { row: IntegratorTr
                             </svg>
                             {c.client_name}
                           </button>
-                          <p className={`text-xs pl-[18px] ${c.error ? "text-down" : muted}`}>{c.error ?? c.site_host}</p>
+                          <p className={`text-xs pl-[18px] ${c.error ? "text-down" : muted}`}>{c.error ?? (c.hosts?.length ? c.hosts.join(" · ") : c.site_host)}</p>
                         </td>
                         <td className={tdNum}>{num(c.requests)}</td>
                         <td className={`${tdNum} ${c.errors_5xx ? "text-down font-medium" : ""}`}>{errs ? `${num(errs)} (${pctFmt(errs / c.requests, 0)})` : "—"}</td>
