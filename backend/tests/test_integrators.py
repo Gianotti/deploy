@@ -126,7 +126,8 @@ def test_shared_user_agent_counts_for_each_integrator():
 def test_normalize_path_prefix_and_paths_from_text():
     assert normalize_path_prefix(" api/v1/products/ ") == "/api/v1/products/"
     assert normalize_path_prefix("https://bna.com/api/v1/orders/?x=1") == "/api/v1/orders/"
-    assert normalize_path_prefix("/api/v1/products/*") == "/api/v1/products/"
+    assert normalize_path_prefix("/api/v1/products/*") == "/api/v1/products/*"
+    assert path_matcher("/api/v1/*").match("/api/v1/orders/1") and path_like("/api/v1/*") == "/api/v1/%%"
     assert normalize_path_prefix("/api/**/orders") == "/api/*/orders"
     assert path_like("/api/*/orders") == "/api/%/orders%"
     assert path_matcher("/api/*/orders").match("/api/v2/orders/9") and not path_matcher("/api/*/orders").match("/x/api/v2/orders")

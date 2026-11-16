@@ -78,8 +78,8 @@ def bucket_keys(now: datetime, minutes: int, size: int) -> list[str]:
 def normalize_path_prefix(value: str) -> str:
     """'api/v1/products/' -> '/api/v1/products/'. A full URL keeps only its path; query strings are
     dropped. Raises ValueError. Matching is "the request path starts with it" (case-sensitive);
-    `*` is a wildcard for any characters ('/api/*/orders'), and a trailing one is redundant, so
-    '/api/v1/products/*' is stored as '/api/v1/products/'."""
+    `*` is a wildcard for any characters ('/api/*/orders'). A trailing one is redundant but kept
+    as typed, so the form shows back what was saved."""
     v = (value or "").strip()
     if "://" in v:
         v = v.split("://", 1)[1]
@@ -89,8 +89,8 @@ def normalize_path_prefix(value: str) -> str:
         v = "/" + v
     if "%" in v or any(c.isspace() for c in v):
         raise ValueError(f"{v}: el path no puede tener % ni espacios")
-    v = re.sub(r"\*+", "*", v).rstrip("*")
-    if len(v) < 2:
+    v = re.sub(r"\*+", "*", v)
+    if len(v.rstrip("*")) < 2:
         raise ValueError("“/” o “/*” solo incluiría todo el sitio: para cualquier path dejá la lista vacía")
     return v
 

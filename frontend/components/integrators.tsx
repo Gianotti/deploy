@@ -536,7 +536,7 @@ function IntegratorForm({ initial, clients, onSave, onCancel, saving, error }: {
         <textarea className="field w-full font-mono text-sm" rows={3} placeholder={"/api/v1/authenticate\n/api/v1/products/\n/api/v1/orders/"}
                   value={d.consumes} onChange={(e) => setD({ ...d, consumes: e.target.value })} />
         <span className={`block text-xs ${muted} mt-1`}>
-          Cuenta todo lo que <em>empiece</em> con el path (/api/v1/products/ incluye /api/v1/products/123), así que no hace falta /* al final. <code>*</code> en el medio es comodín: /api/*/orders. Así no se mezclan escaneos como /login_up.php que vienen de la misma IP. Vacío = cualquier path.
+          Cuenta todo lo que <em>empiece</em> con el path (/api/v1/products/ incluye /api/v1/products/123), así que /* al final es opcional. <code>*</code> en el medio es comodín: /api/*/orders. Así no se mezclan escaneos como /login_up.php que vienen de la misma IP. Vacío = cualquier path.
         </span>
       </label>
       <label className="block">
