@@ -1,13 +1,13 @@
 """a User-Agent can be shared by several integrators (unique per integrator only)
 
-Revision ID: 010_shared_integrator_user_agents
+Revision ID: 010_shared_integrator_uas
 Revises: 009_add_integrator_user_agents
 Create Date: 2026-11-16
 
 """
 from alembic import op
 
-revision = "010_shared_integrator_user_agents"
+revision = "010_shared_integrator_uas"
 down_revision = "009_add_integrator_user_agents"
 branch_labels = None
 depends_on = None
