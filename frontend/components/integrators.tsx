@@ -184,6 +184,12 @@ function IntegratorPanel({ row, minutes, single }: { row: IntegratorTrafficRow; 
         {row.ips.length === 0 && row.user_agents.length === 0 && <span className={`text-xs ${muted}`}>Sin IPs ni user-agents cargados</span>}
       </div>
 
+      <p className={`text-xs ${muted}`}>
+        {row.consumes?.length
+          ? <>Solo cuenta requests a <span className="font-mono">{row.consumes.join(", ")}</span></>
+          : "Cuenta cualquier path (no tiene paths cargados en “Paths que consume”)"}
+      </p>
+
       {row.shared_requests > 0 && (
         <p className={`text-xs ${muted}`}>
           {num(row.shared_requests)} de sus requests llegaron con un user-agent que comparte con otro integrador y también se cuentan allá.
@@ -429,8 +435,8 @@ function Monitor() {
   );
 }
 
-type Draft = { name: string; notes: string; active: boolean; ips: string; uas: string; client_ids: number[] };
-const EMPTY: Draft = { name: "", notes: "", active: true, ips: "", uas: "", client_ids: [] };
+type Draft = { name: string; notes: string; active: boolean; ips: string; uas: string; consumes: string; client_ids: number[] };
+const EMPTY: Draft = { name: "", notes: "", active: true, ips: "", uas: "", consumes: "", client_ids: [] };
 type ClientOpt = { id: number; name: string; site_host?: string | null };
 
 /** "100.25.27.248 Servidor prod" per line -> [{ip, label}]. Lines starting with # are ignored. */
@@ -457,6 +463,7 @@ const toDraft = (i: Integrator): Draft => ({
   name: i.name, notes: i.notes ?? "", active: i.active,
   ips: i.ips.map((x) => (x.label ? `${x.ip} ${x.label}` : x.ip)).join("\n"),
   uas: i.user_agents.map((x) => (x.label ? `${x.pattern} | ${x.label}` : x.pattern)).join("\n"),
+  consumes: (i.consumes ?? []).join("\n"),
   client_ids: i.clients.map((c) => c.id),
 });
 
@@ -525,8 +532,16 @@ function IntegratorForm({ initial, clients, onSave, onCancel, saving, error }: {
       </div>
       <ClientPicker clients={clients} value={d.client_ids} onChange={(client_ids) => setD({ ...d, client_ids })} />
       <label className="block">
-        <span className="field-label">Notas <span className={`font-normal ${muted}`}>· qué consume, contacto, etc.</span></span>
-        <textarea className="field w-full text-sm" rows={3} placeholder={"Consume BNA: api/v1/authenticate, api/v1/products/, api/v1/orders/"}
+        <span className="field-label">Paths que consume <span className={`font-normal ${muted}`}>· uno por línea; solo se cuentan requests a estos paths</span></span>
+        <textarea className="field w-full font-mono text-sm" rows={3} placeholder={"/api/v1/authenticate\n/api/v1/products/\n/api/v1/orders/"}
+                  value={d.consumes} onChange={(e) => setD({ ...d, consumes: e.target.value })} />
+        <span className={`block text-xs ${muted} mt-1`}>
+          Cuenta todo lo que <em>empiece</em> con el path (/api/v1/products/ incluye /api/v1/products/123). Así no se mezclan escaneos como /login_up.php que vienen de la misma IP. Vacío = cualquier path.
+        </span>
+      </label>
+      <label className="block">
+        <span className="field-label">Notas <span className={`font-normal ${muted}`}>· contacto, etc.</span></span>
+        <textarea className="field w-full text-sm" rows={3} placeholder={"Contacto: soporte@integrador.com"}
                   value={d.notes} onChange={(e) => setD({ ...d, notes: e.target.value })} />
       </label>
       {error && <p className="text-red-500 text-sm">{error}</p>}
@@ -561,7 +576,8 @@ function Abm() {
   async function save(id: number | null, d: Draft) {
     setSaving(true); setError("");
     const body: IntegratorInput = {
-      name: d.name.trim(), notes: d.notes.trim() || null, active: d.active, ips: parseIps(d.ips), user_agents: parseUas(d.uas), client_ids: d.client_ids,
+      name: d.name.trim(), notes: d.notes.trim() || null, active: d.active, ips: parseIps(d.ips), user_agents: parseUas(d.uas),
+      consumes: d.consumes.split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#")), client_ids: d.client_ids,
     };
     try {
       if (id == null) await createIntegrator(body); else await updateIntegrator(id, body);
@@ -630,6 +646,12 @@ function Abm() {
                     {i.clients.length
                       ? i.clients.map((c) => c.name).join(", ")
                       : <span className="text-down">ninguno, no se busca su tráfico</span>}
+                  </p>
+                  <p className="text-sm text-gray-700 dark:text-gray-200">
+                    <span className={muted}>Consume: </span>
+                    {i.consumes?.length
+                      ? <span className="font-mono text-xs">{i.consumes.join("  ·  ")}</span>
+                      : <span className={muted}>cualquier path</span>}
                   </p>
                   {i.notes && <p className={`text-sm ${muted} whitespace-pre-line`}>{i.notes}</p>}
                 </div>

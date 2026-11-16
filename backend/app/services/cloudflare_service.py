@@ -715,27 +715,31 @@ _INTEGRATOR_QUERY = """query($z:String!,$f:ZoneHttpRequestsAdaptiveGroupsFilter_
   paths: httpRequestsAdaptiveGroups(limit:5000,orderBy:[count_DESC],filter:$f){
    count sum{edgeResponseBytes} dimensions{clientIP userAgent clientRequestPath clientRequestHTTPMethodName edgeResponseStatus cacheStatus}
   }
-  series: httpRequestsAdaptiveGroups(limit:5000,orderBy:[%(b)s_ASC],filter:$f){count dimensions{clientIP userAgent %(b)s}}
+  series: httpRequestsAdaptiveGroups(limit:5000,orderBy:[%(b)s_ASC],filter:$f){count dimensions{clientIP userAgent%(p)s %(b)s}}
 }}}"""
 _integrator_cache: dict[tuple, tuple[float, dict]] = {}
 
 
 def get_integrator_traffic(account_id: str, token: str, site_host: str, ips: list[str],
-                           minutes: int, bucket_dim: str, user_agents: list[str] | None = None) -> dict | None:
+                           minutes: int, bucket_dim: str, user_agents: list[str] | None = None,
+                           paths: list[str] | None = None, path_dim: bool = False) -> dict | None:
     """Raw `paths` + `series` aliases for requests to a host over the last `minutes` that come
-    from one of `ips` OR whose User-Agent contains one of `user_agents`. None if the host has no
-    zone. Cached (2 min for short windows, 5 min otherwise); the last good answer is returned
-    (marked stale) when Cloudflare fails."""
-    from app.services.integrators import ua_like
+    from one of `ips` OR whose User-Agent contains one of `user_agents`, and (when `paths` is
+    given) whose path starts with one of them. `path_dim` adds the path to the series rows so
+    each integrator's own prefixes can be applied locally. None if the host has no zone. Cached
+    (2 min for short windows, 5 min otherwise); the last good answer is returned (marked stale)
+    when Cloudflare fails."""
+    from app.services.integrators import path_like, ua_like
 
     host = normalize_host(site_host)
     uas = sorted(set(user_agents or []))
+    prefixes = sorted(set(paths or []))
     if not host or not (ips or uas):
         return None
     zone = resolve_zone(host, list_zones(account_id, token))
     if not zone:
         return None
-    key = (zone["id"], host, tuple(sorted(ips)), tuple(uas), minutes)
+    key = (zone["id"], host, tuple(sorted(ips)), tuple(uas), tuple(prefixes), path_dim, minutes)
     ttl = 120 if minutes <= 60 else 300
     cached = _integrator_cache.get(key)
     if cached and time.time() - cached[0] < ttl:
@@ -743,9 +747,14 @@ def get_integrator_traffic(account_id: str, token: str, site_host: str, ips: lis
     host_filter = None if host == zone["name"] else [host, "www." + host]
     now = datetime.now(timezone.utc).replace(microsecond=0)
     who = ([{"clientIP_in": list(ips)}] if ips else []) + [{"userAgent_like": ua_like(p)} for p in uas]
-    f = {**_window(now, minutes, host_filter), **(who[0] if len(who) == 1 else {"OR": who})}
+    conds = [who[0] if len(who) == 1 else {"OR": who}]
+    if prefixes:
+        where = [{"clientRequestPath_like": path_like(p)} for p in prefixes]
+        conds.append(where[0] if len(where) == 1 else {"OR": where})
+    f = {**_window(now, minutes, host_filter), **(conds[0] if len(conds) == 1 else {"AND": conds})}
+    query = _INTEGRATOR_QUERY % {"b": bucket_dim, "p": " clientRequestPath" if path_dim else ""}
     try:
-        d = _graphql(token, _INTEGRATOR_QUERY % {"b": bucket_dim}, {"z": zone["id"], "f": f})
+        d = _graphql(token, query, {"z": zone["id"], "f": f})
         if d.get("errors") or not d.get("data"):
             raise RuntimeError(f"Cloudflare GraphQL: {d.get('errors')}")
         z = d["data"]["viewer"]["zones"][0]

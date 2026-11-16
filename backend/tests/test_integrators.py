@@ -2,7 +2,8 @@ from datetime import datetime, timezone
 
 import pytest
 
-from app.services.integrators import (bucket_for, bucket_keys, group_by_integrator, normalize_ip, normalize_ua_pattern,
+from app.services.integrators import (bucket_for, bucket_keys, group_by_integrator, normalize_ip, normalize_path_prefix,
+                                      normalize_ua_pattern, paths_from_text,
                                       summarize_zone, ua_like)
 
 
@@ -120,6 +121,36 @@ def test_shared_user_agent_counts_for_each_integrator():
            for i, n in ((1, "Uno"), (2, "Dos"))]
     g = {e["id"]: e for e in group_by_integrator(its, rows, 60)}
     assert g[1]["shared_requests"] == 10 and g[1]["user_agents"][0]["shared_with"] == ["Dos"]
+
+
+def test_normalize_path_prefix_and_paths_from_text():
+    assert normalize_path_prefix(" api/v1/products/ ") == "/api/v1/products/"
+    assert normalize_path_prefix("https://bna.com/api/v1/orders/?x=1") == "/api/v1/orders/"
+    for bad in ("/", "", "/a b", "/a%"):
+        with pytest.raises(ValueError):
+            normalize_path_prefix(bad)
+    notes = "Consume BNA: api/v1/authenticate, api/v1/products/, api/v1/orders/. Soporte 24/7 y/o mail."
+    assert paths_from_text(notes) == ["/api/v1/authenticate", "/api/v1/products/", "/api/v1/orders/"]
+    assert paths_from_text(None) == []
+
+
+def test_summarize_zone_only_counts_consumed_paths():
+    owner = {"1.1.1.1": 1}
+    z = {"paths": [_p(10, "1.1.1.1", "/api/v1/products/9"),
+                   _p(9, "1.1.1.1", "/login/", status=403),                 # scanner path: not its own
+                   _p(3, "5.5.5.5", "/api/v1/orders/1", ua="AcmeSDK/2"),
+                   _p(2, "5.5.5.5", "/login_up.php", method="POST", ua="AcmeSDK/2", status=403)],
+         "series": [{"count": 10, "dimensions": {"clientIP": "1.1.1.1", "userAgent": "",
+                                                 "clientRequestPath": "/api/v1/products/9", "datetimeMinute": "t1"}},
+                    {"count": 9, "dimensions": {"clientIP": "1.1.1.1", "userAgent": "",
+                                                "clientRequestPath": "/login/", "datetimeMinute": "t1"}}]}
+    out = summarize_zone(z, owner, "datetimeMinute", ["t1"], [("AcmeSDK/", 2)],
+                         {1: ["/api/v1/products/"], 2: ["/api/v1/orders/"]})
+    assert out[1]["requests"] == 10 and out[1]["errors_4xx"] == 0
+    assert out[1]["series"] == [{"t": "t1", "requests": 10}]
+    assert out[2]["requests"] == 3 and [p["path"] for p in out[2]["paths"]] == ["/api/v1/orders/:id"]
+    # No prefixes = any path (previous behaviour).
+    assert summarize_zone(z, owner, "datetimeMinute", ["t1"])[1]["requests"] == 19
 
 
 def test_buckets():

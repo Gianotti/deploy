@@ -62,6 +62,11 @@ def _patch_missing_columns() -> None:
                     conn.execute(text(ddl))
                     print(f"  → team_notification_slots.{col} added")
 
+        # Path prefixes an integrator consumes (migration 011).
+        if has_table("integrators") and "consumes" not in existing_cols("integrators"):
+            conn.execute(text("ALTER TABLE integrators ADD COLUMN consumes TEXT"))
+            print("  → integrators.consumes added")
+
         # A User-Agent may be shared by several integrators (migration 010).
         if has_table("integrator_user_agents"):
             conn.execute(text(

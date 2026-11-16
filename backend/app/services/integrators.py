@@ -75,11 +75,62 @@ def bucket_keys(now: datetime, minutes: int, size: int) -> list[str]:
     return out
 
 
-def make_resolver(owner: dict[str, int], ua_owner: list[tuple[str, int]] | None = None):
-    """(clientIP, userAgent) -> [(integrator_id, matched UA pattern or None), ...]; empty if nobody's.
+def normalize_path_prefix(value: str) -> str:
+    """'api/v1/products/' -> '/api/v1/products/'. A full URL keeps only its path; query strings are
+    dropped. Raises ValueError. Matching is "the request path starts with it" (case-sensitive)."""
+    v = (value or "").strip()
+    if "://" in v:
+        v = v.split("://", 1)[1]
+        v = v[v.index("/"):] if "/" in v else "/"
+    v = v.split("?", 1)[0].split("#", 1)[0].strip()
+    if not v.startswith("/"):
+        v = "/" + v
+    if "%" in v or any(c.isspace() for c in v):
+        raise ValueError(f"{v}: el path no puede tener % ni espacios")
+    if len(v) < 2:
+        raise ValueError("Path vacío: “/” solo incluiría todo el sitio")
+    return v
+
+
+_PATHISH = re.compile(r"https?://\S+|/?[A-Za-z][\w.\-]*(?:/[\w.\-:{}]*)+")
+
+
+def paths_from_text(text: str | None) -> list[str]:
+    """Path-like tokens in free text, e.g. notes saying 'Consume BNA: api/v1/authenticate,
+    api/v1/products/' -> ['/api/v1/authenticate', '/api/v1/products/']. Tokens without a segment
+    of 3+ letters (like 'y/o') are skipped."""
+    out: list[str] = []
+    for m in _PATHISH.finditer(text or ""):
+        tok = m.group(0).rstrip(".,;:)]}'\"")
+        try:
+            p = normalize_path_prefix(tok)
+        except ValueError:
+            continue
+        if not any(sum(ch.isalpha() for ch in seg) >= 3 for seg in p.split("/")):
+            continue
+        if p not in out:
+            out.append(p)
+    return out
+
+
+def split_consumes(text: str | None) -> list[str]:
+    """Integrator.consumes column (one prefix per line) -> list."""
+    return [x.strip() for x in (text or "").splitlines() if x.strip()]
+
+
+def path_like(prefix: str) -> str:
+    """Cloudflare `clientRequestPath_like` value for "path starts with prefix"."""
+    return f"{prefix}%"
+
+
+def make_resolver(owner: dict[str, int], ua_owner: list[tuple[str, int]] | None = None,
+                  path_owner: dict[int, list[str]] | None = None):
+    """(clientIP, userAgent, path) -> [(integrator_id, matched UA pattern or None), ...]; empty if nobody's.
     A registered IP wins over a User-Agent match (one owner). Among patterns the longest (most
     specific) wins; a pattern shared by several integrators yields all of them, so the request
-    counts for each (we can't tell them apart)."""
+    counts for each (we can't tell them apart). `path_owner` maps an integrator to the path
+    prefixes it consumes: requests to other paths are not its own (no prefixes = any path;
+    path None = not known for this row, no check)."""
     regex: dict[str, re.Pattern] = {}
     by_pattern: dict[str, list[int]] = {}
     for p, iid in ua_owner or []:
@@ -87,13 +138,18 @@ def make_resolver(owner: dict[str, int], ua_owner: list[tuple[str, int]] | None 
         if iid not in by_pattern.setdefault(p, []):
             by_pattern[p].append(iid)
     ordered = sorted(by_pattern, key=lambda p: (-len(p), p))
+    prefixes = path_owner or {}
 
-    def resolve(ip: str, ua: str) -> list[tuple[int, str | None]]:
+    def consumes(iid: int, path: str | None) -> bool:
+        pre = prefixes.get(iid)
+        return not pre or path is None or any(path.startswith(x) for x in pre)
+
+    def resolve(ip: str, ua: str, path: str | None = None) -> list[tuple[int, str | None]]:
         try:
             iid = owner.get(normalize_ip(ip or ""))
         except ValueError:
             iid = None
-        if iid is not None:
+        if iid is not None and consumes(iid, path):
             return [(iid, None)]
         if not ua:
             return []
@@ -103,8 +159,10 @@ def make_resolver(owner: dict[str, int], ua_owner: list[tuple[str, int]] | None 
             if best is not None and len(p) < best:
                 break
             if regex[p].search(ua):
-                best = len(p)
-                hits += [(i, p) for i in by_pattern[p] if all(i != h for h, _ in hits)]
+                new = [(i, p) for i in by_pattern[p] if consumes(i, path) and all(i != h for h, _ in hits)]
+                if new:
+                    best = len(p)
+                    hits += new
         return hits
     return resolve
 
@@ -119,21 +177,25 @@ def _ranked(m: dict) -> list[tuple[str, int]]:
 
 
 def summarize_zone(z: dict, owner: dict[str, int], bucket_dim: str, buckets: list[str] | None = None,
-                   ua_owner: list[tuple[str, int]] | None = None) -> dict[int, dict]:
+                   ua_owner: list[tuple[str, int]] | None = None,
+                   path_owner: dict[int, list[str]] | None = None) -> dict[int, dict]:
     """Cloudflare aliases `paths` + `series` (filtered to integrator IPs / User-Agents) ->
     {integrator_id: summary}. `owner` maps a normalized IP to its integrator; `ua_owner` lists
-    (pattern, integrator_id). Paths are grouped by method + masked path (so /products/123 and
-    /products/456 are one row). Rows matching no integrator are ignored."""
-    resolve = make_resolver(owner, ua_owner)
+    (pattern, integrator_id); `path_owner` the path prefixes each integrator consumes (requests
+    to other paths, e.g. scanners hitting /login.php, are not counted). Paths are grouped by
+    method + masked path (so /products/123 and /products/456 are one row). Rows matching no
+    integrator are ignored. Series rows carry `clientRequestPath` when any prefixes are set."""
+    resolve = make_resolver(owner, ua_owner, path_owner)
     acc: dict[int, dict] = {}
     for g in z.get("paths") or []:
         d = g["dimensions"]
-        for iid, pattern in (hits := resolve(d.get("clientIP") or "", d.get("userAgent") or "")):
+        for iid, pattern in (hits := resolve(d.get("clientIP") or "", d.get("userAgent") or "",
+                                             d.get("clientRequestPath") or "/")):
             _add_path_row(acc.setdefault(iid, _empty(iid)), g, d, pattern, len(hits) > 1)
 
     for g in z.get("series") or []:
         d = g["dimensions"]
-        for iid, _ in resolve(d.get("clientIP") or "", d.get("userAgent") or ""):
+        for iid, _ in resolve(d.get("clientIP") or "", d.get("userAgent") or "", d.get("clientRequestPath")):
             e = acc.setdefault(iid, _empty(iid))
             t = d.get(bucket_dim)
             e["series"][t] = e["series"].get(t, 0) + g["count"]
@@ -238,7 +300,7 @@ def group_by_integrator(integrators: list[dict], client_rows: list[dict], minute
         registered = {x["ip"] for x in it.get("ips", [])}
         last = max((c["last_seen"] for c in by_client if c["last_seen"]), default=None)
         out.append({
-            "id": it["id"], "name": it["name"], "active": it.get("active", True),
+            "id": it["id"], "name": it["name"], "active": it.get("active", True), "consumes": it.get("consumes", []),
             "requests": req,
             "requests_per_min": round(req / minutes, 2) if minutes else 0.0,
             "bytes": sum(c["bytes"] for c in by_client),

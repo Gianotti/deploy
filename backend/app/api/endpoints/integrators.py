@@ -58,6 +58,7 @@ def create_integrator(payload: IntegratorIn, db: Session = Depends(get_db)):
     _check_name(db, payload.name, None)
     _check_ips(db, payload, None)
     it = Integrator(name=payload.name, notes=payload.notes, active=payload.active,
+                    consumes="\n".join(payload.consumes) or None,
                     ips=[IntegratorIP(ip=x.ip, label=x.label) for x in payload.ips],
                     user_agents=[IntegratorUserAgent(pattern=x.pattern, label=x.label) for x in payload.user_agents],
                     clients=_clients(db, payload.client_ids))
@@ -75,6 +76,7 @@ def update_integrator(integrator_id: int, payload: IntegratorIn, db: Session = D
     _check_name(db, payload.name, it.id)
     _check_ips(db, payload, it.id)
     it.name, it.notes, it.active = payload.name, payload.notes, payload.active
+    it.consumes = "\n".join(payload.consumes) or None
     it.clients = _clients(db, payload.client_ids)
     # Replace the IP and User-Agent lists, keeping rows whose value didn't change.
     wanted = {x.ip: x.label for x in payload.ips}
@@ -138,6 +140,7 @@ def build_integrator_traffic(db: Session, minutes: int, client_id: int | None, p
         its.append({"id": i.id, "name": i.name, "active": i.active,
                     "ips": [{"ip": x.ip, "label": x.label} for x in i.ips],
                     "user_agents": [{"pattern": x.pattern, "label": x.label} for x in i.user_agents],
+                    "consumes": svc.split_consumes(i.consumes),
                     "client_ids": [c.id for c in linked]})
     base = {"generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"), "minutes": minutes}
     creds = get_cf_creds(db)
@@ -154,6 +157,10 @@ def build_integrator_traffic(db: Session, minutes: int, client_id: int | None, p
         mine = [i for i in its if c.id in i["client_ids"]]
         owner = {x["ip"]: i["id"] for i in mine for x in i["ips"]}
         ua_owner = [(x["pattern"], i["id"]) for i in mine for x in i["user_agents"]]
+        # Paths each one consumes. Cloudflare only filters by path when every integrator here has
+        # some (one with none takes any path); each one's own prefixes are applied locally anyway.
+        path_owner = {i["id"]: i["consumes"] for i in mine if i["consumes"]}
+        cf_paths = sorted({p for i in mine for p in i["consumes"]}) if mine and all(i["consumes"] for i in mine) else None
         if not host:
             row["error"] = "Sin dominio configurado (Admin → Clientes)"
             return row
@@ -162,9 +169,9 @@ def build_integrator_traffic(db: Session, minutes: int, client_id: int | None, p
         try:
             raw = cloudflare_service.get_integrator_traffic(
                 creds["account_id"], creds["api_token"], host, sorted(owner), minutes, bucket_dim,
-                user_agents=sorted({p for p, _ in ua_owner}))
+                user_agents=sorted({p for p, _ in ua_owner}), paths=cf_paths, path_dim=bool(path_owner))
             if raw:
-                row["by_integrator"] = svc.summarize_zone(raw, owner, bucket_dim, buckets, ua_owner)
+                row["by_integrator"] = svc.summarize_zone(raw, owner, bucket_dim, buckets, ua_owner, path_owner)
                 row["stale"] = bool(raw.get("stale"))
             else:
                 row["error"] = f"{host} no está en ninguna zona de Cloudflare"

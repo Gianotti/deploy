@@ -1,6 +1,6 @@
 from pydantic import BaseModel, field_validator
 
-from app.services.integrators import normalize_ip, normalize_ua_pattern
+from app.services.integrators import normalize_ip, normalize_path_prefix, normalize_ua_pattern, split_consumes
 
 
 def _clean_label(v: str | None) -> str | None:
@@ -45,7 +45,13 @@ class IntegratorIn(BaseModel):
     active: bool = True
     ips: list[IntegratorIPIn] = []
     user_agents: list[IntegratorUAIn] = []
+    consumes: list[str] = []
     client_ids: list[int] = []
+
+    @field_validator("consumes")
+    @classmethod
+    def _consumes(cls, v: list[str]) -> list[str]:
+        return list(dict.fromkeys(normalize_path_prefix(x) for x in v if (x or "").strip()))
 
     @field_validator("user_agents")
     @classmethod
@@ -109,5 +115,11 @@ class IntegratorOut(BaseModel):
     active: bool
     ips: list[IntegratorIPOut] = []
     user_agents: list[IntegratorUAOut] = []
+    consumes: list[str] = []
     clients: list[IntegratorClientOut] = []
     model_config = {"from_attributes": True}
+
+    @field_validator("consumes", mode="before")
+    @classmethod
+    def _split(cls, v):
+        return split_consumes(v) if isinstance(v, str) or v is None else v

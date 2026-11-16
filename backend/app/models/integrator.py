@@ -20,6 +20,9 @@ class Integrator(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, nullable=False, unique=True)
     notes = Column(Text, nullable=True)
+    # Path prefixes it consumes, one per line (e.g. "/api/v1/products/"). Only requests to these
+    # paths count as its traffic; empty = any path.
+    consumes = Column(Text, nullable=True)
     active = Column(Boolean, nullable=False, default=True)
 
     ips = relationship("IntegratorIP", back_populates="integrator", cascade="all, delete-orphan",

@@ -748,11 +748,13 @@ export interface IntegratorUA { id?: number; pattern: string; label: string | nu
 export interface Integrator {
   id: number; name: string; notes: string | null; active: boolean; ips: IntegratorIP[];
   user_agents: IntegratorUA[];
+  /** Path prefixes it consumes; only those count as its traffic. Empty = any path. */
+  consumes: string[];
   clients: { id: number; name: string; site_host: string | null }[];
 }
 export interface IntegratorInput {
   name: string; notes: string | null; active: boolean; ips: { ip: string; label: string | null }[];
-  user_agents: { pattern: string; label: string | null }[]; client_ids: number[];
+  user_agents: { pattern: string; label: string | null }[]; consumes: string[]; client_ids: number[];
 }
 
 export interface IntegratorPathRow {
@@ -771,6 +773,8 @@ export interface IntegratorClientTraffic {
 }
 export interface IntegratorTrafficRow {
   id: number; name: string; active: boolean;
+  /** Path prefixes counted as its traffic (empty = any path). */
+  consumes: string[];
   requests: number; requests_per_min: number; bytes: number;
   errors_4xx: number; errors_5xx: number; error_rate: number; last_seen: string | null;
   ips: { ip: string; label: string | null; requests: number }[];
