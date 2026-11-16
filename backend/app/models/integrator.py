@@ -24,6 +24,8 @@ class Integrator(Base):
 
     ips = relationship("IntegratorIP", back_populates="integrator", cascade="all, delete-orphan",
                        order_by="IntegratorIP.id")
+    user_agents = relationship("IntegratorUserAgent", back_populates="integrator", cascade="all, delete-orphan",
+                               order_by="IntegratorUserAgent.id")
     clients = relationship("Client", secondary=integrator_clients, order_by="Client.name")
 
 
@@ -36,3 +38,17 @@ class IntegratorIP(Base):
     label = Column(String, nullable=True)
 
     integrator = relationship("Integrator", back_populates="ips")
+
+
+class IntegratorUserAgent(Base):
+    """A User-Agent fragment that identifies an integrator when its IPs are unknown.
+    A request matches when its User-Agent contains `pattern` (case-sensitive, like Cloudflare's
+    `userAgent_like`; `_` matches any single character)."""
+    __tablename__ = "integrator_user_agents"
+
+    id = Column(Integer, primary_key=True, index=True)
+    integrator_id = Column(Integer, ForeignKey("integrators.id", ondelete="CASCADE"), nullable=False, index=True)
+    pattern = Column(String, nullable=False, unique=True)
+    label = Column(String, nullable=True)
+
+    integrator = relationship("Integrator", back_populates="user_agents")

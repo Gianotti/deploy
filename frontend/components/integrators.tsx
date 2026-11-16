@@ -1,10 +1,10 @@
 "use client";
 
-// Integrators: third parties (e.g. Sincroshop) that call our sites' APIs from known IPs.
+// Integrators: third parties (e.g. Sincroshop) that call our sites' APIs, known by IP or User-Agent.
 // - <IntegratorsAdmin/>: /admin tab with the traffic monitor and the CRUD (ABM).
 // - <IntegratorsCard clientId/>: card inside a client's Cloudflare detail (/executive).
-// Traffic comes from Cloudflare filtered by the integrators' IPs (GET /integrators/traffic).
-// Never shown on the public landing.
+// Traffic comes from Cloudflare filtered by the integrators' IPs or User-Agents (GET /integrators/traffic).
+// - <PublicIntegrators clientId/>: same per-client monitor on /landing/[slug] (GET /public/integrators).
 
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { Segmented } from "@/components/executive/charts";
@@ -169,8 +169,52 @@ function IntegratorPanel({ row, minutes, single }: { row: IntegratorTrafficRow; 
             <span className="tabular-nums text-gray-900 dark:text-white">{num(ip.requests)}</span>
           </span>
         ))}
-        {row.ips.length === 0 && <span className={`text-xs ${muted}`}>Sin IPs cargadas</span>}
+        {row.user_agents.map((u) => (
+          <span key={u.pattern} title={`User-agent que contiene “${u.pattern}”` + (u.requests ? ` · ${num(u.requests)} requests en la ventana` : " · sin requests en la ventana")}
+                className="inline-flex items-center gap-1.5 rounded-full border border-dashed border-gray-300 dark:border-navy-600 px-2.5 py-0.5 text-xs max-w-full">
+            <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${u.requests ? "bg-up" : "bg-ink-3/50"}`} aria-hidden />
+            <span className={muted}>UA</span>
+            <span className="font-mono text-gray-700 dark:text-gray-200 truncate">{u.pattern}</span>
+            {u.label && <span className={muted}>{u.label}</span>}
+            <span className="tabular-nums text-gray-900 dark:text-white">{num(u.requests)}</span>
+          </span>
+        ))}
+        {row.ips.length === 0 && row.user_agents.length === 0 && <span className={`text-xs ${muted}`}>Sin IPs ni user-agents cargados</span>}
       </div>
+
+      {(row.detected_ips.length > 0 || (row.user_agents.length > 0 && row.ua_seen.length > 0)) && (
+        <details className="rounded-lg bg-gray-50 dark:bg-navy-900/40 px-3 py-2 text-sm">
+          <summary className="cursor-pointer text-gray-700 dark:text-gray-200">
+            Detectado por user-agent
+            <span className={`ml-1 ${muted}`}>
+              · {row.detected_ips.length} {row.detected_ips.length === 1 ? "IP no cargada" : "IPs no cargadas"}, {row.ua_seen.length} user-agents
+            </span>
+          </summary>
+          <div className="grid gap-4 md:grid-cols-2 pt-3">
+            <div>
+              <p className={`text-xs ${muted} mb-1`}>IPs desde donde llegó (no cargadas): podés sumarlas en Administrar.</p>
+              <ul className="space-y-0.5">
+                {row.detected_ips.map((x) => (
+                  <li key={x.ip} className="flex justify-between gap-3 font-mono text-xs text-gray-700 dark:text-gray-200">
+                    <span>{x.ip}</span><span className="tabular-nums">{num(x.requests)}</span>
+                  </li>
+                ))}
+                {row.detected_ips.length === 0 && <li className={`text-xs ${muted}`}>Ninguna.</li>}
+              </ul>
+            </div>
+            <div className="min-w-0">
+              <p className={`text-xs ${muted} mb-1`}>User-agents completos vistos</p>
+              <ul className="space-y-0.5">
+                {row.ua_seen.map((x) => (
+                  <li key={x.user_agent} className="flex justify-between gap-3 font-mono text-xs text-gray-700 dark:text-gray-200">
+                    <span className="break-all">{x.user_agent}</span><span className="tabular-nums shrink-0">{num(x.requests)}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        </details>
+      )}
 
       {row.clients.length === 0 && !single && (
         <p className={`text-sm ${muted}`}>Sin clientes asociados: asocialo a sus tiendas en Administrar.</p>
@@ -179,7 +223,7 @@ function IntegratorPanel({ row, minutes, single }: { row: IntegratorTrafficRow; 
         single ? (
           row.clients[0].error ? <p className="text-sm text-down">{row.clients[0].error}</p>
           : row.clients[0].paths.length ? <PathsTable c={row.clients[0]} />
-          : <p className={`text-sm ${muted}`}>Sin requests de sus IPs en {windowLabel(minutes)}.</p>
+          : <p className={`text-sm ${muted}`}>Sin requests de sus IPs ni user-agents en {windowLabel(minutes)}.</p>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm text-left min-w-[560px]">
@@ -265,7 +309,7 @@ function ActiveList({ rows, minutes }: { rows: IntegratorTrafficRow[]; minutes: 
         <thead>
           <tr className="border-b border-gray-100 dark:border-navy-700">
             <th className={thCls}>Integrador</th>
-            <th className={thCls}>IPs</th>
+            <th className={thCls}>Identificado por</th>
             <th className={`${thCls} text-right`}>Requests</th>
             <th className={`${thCls} text-right`}>Por minuto</th>
             <th className={`${thCls} text-right`}>Errores</th>
@@ -282,7 +326,9 @@ function ActiveList({ rows, minutes }: { rows: IntegratorTrafficRow[]; minutes: 
                   <a href={`#integrador-${r.id}`} className="hover:underline">{r.name}</a>
                 </td>
                 <td className="py-2 pr-4 font-mono text-xs text-gray-700 dark:text-gray-200">
-                  {r.ips.length ? r.ips.map((x) => x.ip).join(", ") : <span className={muted}>sin IPs</span>}
+                  {r.ips.length + r.user_agents.length
+                    ? [...r.ips.map((x) => x.ip), ...r.user_agents.map((x) => `UA “${x.pattern}”`)].join(", ")
+                    : <span className={muted}>sin IPs ni user-agents</span>}
                 </td>
                 <td className={tdNum}>{num(r.requests)}</td>
                 <td className={tdNum}>{perMin(r.requests_per_min)}</td>
@@ -355,7 +401,7 @@ function Monitor() {
         <div>
           <h2 className="font-semibold text-gray-900 dark:text-white">Monitor de integradores</h2>
           <p className={`text-sm ${muted}`}>
-            Requests de las IPs de cada integrador en los clientes a los que está asociado
+            Requests de cada integrador (por IP o user-agent) en los clientes a los que está asociado
             {live.data?.configured ? ` · ${num(total)} en ${windowLabel(minutes)}` : ""}
             {live.data?.stale ? " · datos anteriores" : ""}
             {live.data ? ` · ${clock(live.data.generated_at)}` : ""}
@@ -369,13 +415,13 @@ function Monitor() {
         </div>
       </div>
       <TrafficBody live={live} minutes={minutes}
-                   emptyHint={<p className={`text-sm ${muted}`}>No hay integradores activos. Cargá uno abajo con sus IPs.</p>} />
+                   emptyHint={<p className={`text-sm ${muted}`}>No hay integradores activos. Cargá uno en Administrar con sus IPs o user-agents.</p>} />
     </div>
   );
 }
 
-type Draft = { name: string; notes: string; active: boolean; ips: string; client_ids: number[] };
-const EMPTY: Draft = { name: "", notes: "", active: true, ips: "", client_ids: [] };
+type Draft = { name: string; notes: string; active: boolean; ips: string; uas: string; client_ids: number[] };
+const EMPTY: Draft = { name: "", notes: "", active: true, ips: "", uas: "", client_ids: [] };
 type ClientOpt = { id: number; name: string; site_host?: string | null };
 
 /** "100.25.27.248 Servidor prod" per line -> [{ip, label}]. Lines starting with # are ignored. */
@@ -387,9 +433,21 @@ export function parseIps(text: string): IntegratorInput["ips"] {
   });
 }
 
+/** "FravegaSync/1 | Stock" per line -> [{pattern, label}]. User-Agents have spaces, so the
+ *  label goes after " | ". Lines starting with # are ignored. */
+export function parseUas(text: string): IntegratorInput["user_agents"] {
+  return text.split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#")).map((l) => {
+    const i = l.lastIndexOf(" | ");
+    const pattern = (i >= 0 ? l.slice(0, i) : l).trim();
+    const label = i >= 0 ? l.slice(i + 3).trim() : "";
+    return { pattern, label: label || null };
+  });
+}
+
 const toDraft = (i: Integrator): Draft => ({
   name: i.name, notes: i.notes ?? "", active: i.active,
   ips: i.ips.map((x) => (x.label ? `${x.ip} ${x.label}` : x.ip)).join("\n"),
+  uas: i.user_agents.map((x) => (x.label ? `${x.pattern} | ${x.label}` : x.pattern)).join("\n"),
   client_ids: i.clients.map((c) => c.id),
 });
 
@@ -424,6 +482,7 @@ function IntegratorForm({ initial, clients, onSave, onCancel, saving, error }: {
 }) {
   const [d, setD] = useState(initial);
   const n = parseIps(d.ips).length;
+  const nUa = parseUas(d.uas).length;
   return (
     <form onSubmit={(e) => { e.preventDefault(); onSave(d); }} className="space-y-4">
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -436,11 +495,25 @@ function IntegratorForm({ initial, clients, onSave, onCancel, saving, error }: {
           Activo (se incluye en el monitor)
         </label>
       </div>
-      <label className="block">
-        <span className="field-label">IPs <span className={`font-normal ${muted}`}>· una por línea, con una etiqueta opcional ({n} {n === 1 ? "IP" : "IPs"})</span></span>
-        <textarea className="field w-full font-mono text-sm" rows={4} placeholder={"100.25.27.248 Servidor prod\n100.25.27.249"}
-                  value={d.ips} onChange={(e) => setD({ ...d, ips: e.target.value })} />
-      </label>
+      <p className={`text-sm ${muted}`}>
+        Se identifica por IP <strong className="font-medium text-gray-700 dark:text-gray-200">o</strong> por user-agent: cargá lo que tengas.
+        Una request es suya si viene de una de sus IPs o si su user-agent contiene alguno de los textos.
+      </p>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <label className="block">
+          <span className="field-label">IPs <span className={`font-normal ${muted}`}>· una por línea, con etiqueta opcional ({n} {n === 1 ? "IP" : "IPs"})</span></span>
+          <textarea className="field w-full font-mono text-sm" rows={4} placeholder={"100.25.27.248 Servidor prod\n100.25.27.249"}
+                    value={d.ips} onChange={(e) => setD({ ...d, ips: e.target.value })} />
+        </label>
+        <label className="block">
+          <span className="field-label">User-agents <span className={`font-normal ${muted}`}>· uno por línea, etiqueta después de “ | ” ({nUa})</span></span>
+          <textarea className="field w-full font-mono text-sm" rows={4} placeholder={"SincroshopBot/2.1 | Sync de stock\nAcmeConnector"}
+                    value={d.uas} onChange={(e) => setD({ ...d, uas: e.target.value })} />
+          <span className={`block text-xs ${muted} mt-1`}>
+            Busca que el user-agent <em>contenga</em> el texto; distingue mayúsculas. Mínimo 4 caracteres. Evitá textos genéricos como “Mozilla” u “okhttp” solos: también los usan otros.
+          </span>
+        </label>
+      </div>
       <ClientPicker clients={clients} value={d.client_ids} onChange={(client_ids) => setD({ ...d, client_ids })} />
       <label className="block">
         <span className="field-label">Notas <span className={`font-normal ${muted}`}>· qué consume, contacto, etc.</span></span>
@@ -479,7 +552,7 @@ function Abm() {
   async function save(id: number | null, d: Draft) {
     setSaving(true); setError("");
     const body: IntegratorInput = {
-      name: d.name.trim(), notes: d.notes.trim() || null, active: d.active, ips: parseIps(d.ips), client_ids: d.client_ids,
+      name: d.name.trim(), notes: d.notes.trim() || null, active: d.active, ips: parseIps(d.ips), user_agents: parseUas(d.uas), client_ids: d.client_ids,
     };
     try {
       if (id == null) await createIntegrator(body); else await updateIntegrator(id, body);
@@ -488,7 +561,7 @@ function Abm() {
   }
 
   async function remove(i: Integrator) {
-    if (!confirm(`¿Eliminar el integrador "${i.name}" y sus ${i.ips.length} IPs?`)) return;
+    if (!confirm(`¿Eliminar el integrador "${i.name}" con sus ${i.ips.length} IPs y ${i.user_agents.length} user-agents?`)) return;
     try { await deleteIntegrator(i.id); await load(); } catch (e) { alert(extractError(e)); }
   }
 
@@ -497,7 +570,7 @@ function Abm() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="font-semibold text-gray-900 dark:text-white">Integradores</h2>
-          <p className={`text-sm ${muted}`}>Terceros que consumen nuestras APIs. Su tráfico se detecta en Cloudflare por IP.</p>
+          <p className={`text-sm ${muted}`}>Terceros que consumen nuestras APIs. Su tráfico se detecta en Cloudflare por IP o por user-agent.</p>
         </div>
         {isAdmin && editing !== "new" && (
           <button type="button" onClick={() => { setEditing("new"); setError(""); }} className="btn-primary">+ Nuevo integrador</button>
@@ -532,7 +605,16 @@ function Abm() {
                         {x.label && <span className={`ml-1 ${muted}`}>{x.label}</span>}
                       </span>
                     ))}
-                    {i.ips.length === 0 && <span className={`text-xs ${muted}`}>Sin IPs: no se puede detectar su tráfico</span>}
+                    {i.user_agents.map((x) => (
+                      <span key={x.pattern} className="rounded-full border border-dashed border-gray-300 dark:border-navy-600 px-2.5 py-0.5 text-xs">
+                        <span className={`mr-1 ${muted}`}>UA</span>
+                        <span className="font-mono text-gray-800 dark:text-gray-200">{x.pattern}</span>
+                        {x.label && <span className={`ml-1 ${muted}`}>{x.label}</span>}
+                      </span>
+                    ))}
+                    {i.ips.length === 0 && i.user_agents.length === 0 && (
+                      <span className="text-xs text-down">Sin IPs ni user-agents: no se puede detectar su tráfico</span>
+                    )}
                   </div>
                   <p className="text-sm text-gray-700 dark:text-gray-200">
                     <span className={muted}>Clientes: </span>

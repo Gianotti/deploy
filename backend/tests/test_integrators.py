@@ -2,17 +2,18 @@ from datetime import datetime, timezone
 
 import pytest
 
-from app.services.integrators import bucket_for, bucket_keys, group_by_integrator, normalize_ip, summarize_zone
+from app.services.integrators import (bucket_for, bucket_keys, group_by_integrator, normalize_ip, normalize_ua_pattern,
+                                      summarize_zone, ua_like)
 
 
-def _p(n, ip, path, method="GET", status=200, cache="dynamic", b=10):
+def _p(n, ip, path, method="GET", status=200, cache="dynamic", b=10, ua=""):
     return {"count": n, "sum": {"edgeResponseBytes": b}, "dimensions": {
-        "clientIP": ip, "clientRequestPath": path, "clientRequestHTTPMethodName": method,
+        "clientIP": ip, "userAgent": ua, "clientRequestPath": path, "clientRequestHTTPMethodName": method,
         "edgeResponseStatus": status, "cacheStatus": cache}}
 
 
-def _s(n, ip, t):
-    return {"count": n, "dimensions": {"clientIP": ip, "datetimeMinute": t}}
+def _s(n, ip, t, ua=""):
+    return {"count": n, "dimensions": {"clientIP": ip, "userAgent": ua, "datetimeMinute": t}}
 
 
 def test_normalize_ip():
@@ -68,6 +69,38 @@ def test_group_by_integrator_totals_and_unseen_ips():
     assert s["ips"] == [{"ip": "100.25.27.248", "label": "prod", "requests": 60}, {"ip": "2.2.2.2", "label": None, "requests": 0}]
     assert g[1]["requests"] == 0 and g[1]["clients"][0]["error"] == "Sin dominio" and g[1]["last_seen"] is None
     assert g[2]["clients"] == []
+
+
+def test_normalize_ua_pattern():
+    assert normalize_ua_pattern("  Sincroshop-Bot/2 ") == "Sincroshop-Bot/2"
+    for bad in ("", "abc", "foo%bar"):
+        with pytest.raises(ValueError):
+            normalize_ua_pattern(bad)
+    assert ua_like("okhttp") == "%okhttp%"
+
+
+def test_summarize_zone_matches_by_user_agent():
+    owner = {"100.25.27.248": 1}
+    ua_owner = [("Sincro", 1), ("VtexIO_", 2), ("VtexIO_Sync", 3)]
+    z = {"paths": [
+            _p(10, "100.25.27.248", "/a", ua="curl/8"),                    # registered IP wins
+            _p(7, "5.5.5.5", "/b", ua="Mozilla Sincroshop/2"),             # contains, any IP
+            _p(3, "6.6.6.6", "/c", ua="sincroshop/2"),                     # case-sensitive: ignored
+            _p(4, "7.7.7.7", "/d", ua="VtexIO_Sync/1"),                    # longest pattern wins
+            _p(2, "8.8.8.8", "/e", ua="VtexIO-Other"),                     # `_` is any char
+         ],
+         "series": [_s(17, "5.5.5.5", "t1", ua="Mozilla Sincroshop/2"), _s(4, "7.7.7.7", "t1", ua="VtexIO_Sync/1")]}
+    out = summarize_zone(z, owner, "datetimeMinute", ["t1"], ua_owner)
+    assert out[1]["requests"] == 17 and out[1]["agents"] == [{"pattern": "Sincro", "requests": 7}]
+    assert out[1]["series"] == [{"t": "t1", "requests": 17}]
+    assert out[3]["requests"] == 4 and out[2]["requests"] == 2
+    rows = [{"client_id": 7, "client_name": "BNA", "site_host": "bna.com", "by_integrator": out}]
+    its = [{"id": 1, "name": "Sincroshop", "client_ids": [7], "ips": [{"ip": "100.25.27.248", "label": None}],
+            "user_agents": [{"pattern": "Sincro", "label": "app"}]}]
+    g = group_by_integrator(its, rows, 60)[0]
+    assert g["user_agents"] == [{"pattern": "Sincro", "label": "app", "requests": 7}]
+    assert g["detected_ips"] == [{"ip": "5.5.5.5", "requests": 7}]
+    assert g["ua_seen"][0] == {"user_agent": "curl/8", "requests": 10}
 
 
 def test_buckets():

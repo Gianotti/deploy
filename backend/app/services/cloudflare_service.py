@@ -713,32 +713,37 @@ def _fetch_extras(token: str, zone_id: str, now: datetime, host_filter: list[str
 
 _INTEGRATOR_QUERY = """query($z:String!,$f:ZoneHttpRequestsAdaptiveGroupsFilter_InputObject!){viewer{zones(filter:{zoneTag:$z}){
   paths: httpRequestsAdaptiveGroups(limit:5000,orderBy:[count_DESC],filter:$f){
-   count sum{edgeResponseBytes} dimensions{clientIP clientRequestPath clientRequestHTTPMethodName edgeResponseStatus cacheStatus}
+   count sum{edgeResponseBytes} dimensions{clientIP userAgent clientRequestPath clientRequestHTTPMethodName edgeResponseStatus cacheStatus}
   }
-  series: httpRequestsAdaptiveGroups(limit:5000,orderBy:[%(b)s_ASC],filter:$f){count dimensions{clientIP %(b)s}}
+  series: httpRequestsAdaptiveGroups(limit:5000,orderBy:[%(b)s_ASC],filter:$f){count dimensions{clientIP userAgent %(b)s}}
 }}}"""
 _integrator_cache: dict[tuple, tuple[float, dict]] = {}
 
 
 def get_integrator_traffic(account_id: str, token: str, site_host: str, ips: list[str],
-                           minutes: int, bucket_dim: str) -> dict | None:
-    """Raw `paths` + `series` aliases for requests from `ips` to a host over the last `minutes`.
-    None if the host has no zone. Cached (2 min for short windows, 5 min otherwise);
-    the last good answer is returned (marked stale) when Cloudflare fails."""
+                           minutes: int, bucket_dim: str, user_agents: list[str] | None = None) -> dict | None:
+    """Raw `paths` + `series` aliases for requests to a host over the last `minutes` that come
+    from one of `ips` OR whose User-Agent contains one of `user_agents`. None if the host has no
+    zone. Cached (2 min for short windows, 5 min otherwise); the last good answer is returned
+    (marked stale) when Cloudflare fails."""
+    from app.services.integrators import ua_like
+
     host = normalize_host(site_host)
-    if not host or not ips:
+    uas = sorted(set(user_agents or []))
+    if not host or not (ips or uas):
         return None
     zone = resolve_zone(host, list_zones(account_id, token))
     if not zone:
         return None
-    key = (zone["id"], host, tuple(sorted(ips)), minutes)
+    key = (zone["id"], host, tuple(sorted(ips)), tuple(uas), minutes)
     ttl = 120 if minutes <= 60 else 300
     cached = _integrator_cache.get(key)
     if cached and time.time() - cached[0] < ttl:
         return cached[1]
     host_filter = None if host == zone["name"] else [host, "www." + host]
     now = datetime.now(timezone.utc).replace(microsecond=0)
-    f = {**_window(now, minutes, host_filter), "clientIP_in": list(ips)}
+    who = ([{"clientIP_in": list(ips)}] if ips else []) + [{"userAgent_like": ua_like(p)} for p in uas]
+    f = {**_window(now, minutes, host_filter), **(who[0] if len(who) == 1 else {"OR": who})}
     try:
         d = _graphql(token, _INTEGRATOR_QUERY % {"b": bucket_dim}, {"z": zone["id"], "f": f})
         if d.get("errors") or not d.get("data"):

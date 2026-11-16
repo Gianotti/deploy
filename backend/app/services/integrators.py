@@ -1,17 +1,22 @@
-"""Integrator traffic (third parties calling our APIs from known IPs). Pure: no DB, no network.
+"""Integrator traffic (third parties calling our APIs). Pure: no DB, no network.
 
-Cloudflare rows come from cloudflare_service.get_integrator_traffic(); this module turns them
-into per-integrator numbers: requests, errors, bytes, which paths they hit, which IPs were seen
-and a per-bucket series.
+An integrator is recognized by its registered IPs or, when it never shared them, by fragments
+of its User-Agent. Cloudflare rows come from cloudflare_service.get_integrator_traffic(); this
+module attributes each row to an integrator and turns them into per-integrator numbers:
+requests, errors, bytes, which paths they hit, which IPs / User-Agents were seen and a
+per-bucket series.
 """
 from __future__ import annotations
 
 import ipaddress
+import re
 from datetime import datetime, timedelta
 
 from app.services.cloudflare_service import MAX_PATH, mask_path
 
 TOP_PATHS = 30
+TOP_DETECTED = 10                      # unregistered IPs / raw User-Agents shown per integrator
+UA_MIN_LEN = 4
 WINDOWS = (15, 60, 360, 1440)          # minutes the monitor offers
 _CACHED = {"hit", "stale", "revalidated", "updating"}
 
@@ -26,6 +31,27 @@ def normalize_ip(value: str) -> str:
         return str(ipaddress.ip_address(v))
     except ValueError:
         raise ValueError(f"{v or '(vacía)'} no es una IP válida") from None
+
+
+def normalize_ua_pattern(value: str) -> str:
+    """A User-Agent fragment to look for. Raises ValueError. Matching is "contains" and
+    case-sensitive (Cloudflare's `userAgent_like`); `_` matches any single character, `%` is not allowed."""
+    v = (value or "").strip()
+    if "%" in v:
+        raise ValueError(f"{v}: el user-agent no puede tener %")
+    if len(v) < UA_MIN_LEN:
+        raise ValueError(f"{v or '(vacío)'}: el user-agent necesita al menos {UA_MIN_LEN} caracteres")
+    return v
+
+
+def ua_like(pattern: str) -> str:
+    """Cloudflare `userAgent_like` value for "User-Agent contains pattern"."""
+    return f"%{pattern}%"
+
+
+def _ua_regex(pattern: str) -> re.Pattern:
+    # Same semantics as SQL LIKE inside %...%: `_` is any one character, the rest is literal.
+    return re.compile(".".join(re.escape(part) for part in pattern.split("_")))
 
 
 def bucket_for(minutes: int) -> tuple[str, int]:
@@ -49,24 +75,48 @@ def bucket_keys(now: datetime, minutes: int, size: int) -> list[str]:
     return out
 
 
+def make_resolver(owner: dict[str, int], ua_owner: list[tuple[str, int]] | None = None):
+    """(clientIP, userAgent) -> (integrator_id, matched UA pattern or None), or None if nobody's.
+    A registered IP wins over a User-Agent match; among patterns the longest (most specific) wins."""
+    uas = sorted(((p, _ua_regex(p), iid) for p, iid in (ua_owner or [])), key=lambda x: -len(x[0]))
+
+    def resolve(ip: str, ua: str):
+        try:
+            iid = owner.get(normalize_ip(ip or ""))
+        except ValueError:
+            iid = None
+        if iid is not None:
+            return iid, None
+        for p, rx, iid in uas:
+            if ua and rx.search(ua):
+                return iid, p
+        return None
+    return resolve
+
+
 def _empty(iid: int) -> dict:
     return {"integrator_id": iid, "requests": 0, "bytes": 0, "cached": 0, "errors_4xx": 0, "errors_5xx": 0,
-            "ips": {}, "paths": {}, "series": {}}
+            "ips": {}, "agents": {}, "ua_raw": {}, "paths": {}, "series": {}}
 
 
-def summarize_zone(z: dict, owner: dict[str, int], bucket_dim: str, buckets: list[str] | None = None) -> dict[int, dict]:
-    """Cloudflare aliases `paths` + `series` filtered to integrator IPs -> {integrator_id: summary}.
-    `owner` maps a normalized IP to its integrator. Paths are grouped by method + masked path
-    (so /products/123 and /products/456 are one row). IPs not in `owner` are ignored."""
+def _ranked(m: dict) -> list[tuple[str, int]]:
+    return sorted(m.items(), key=lambda kv: -kv[1])
+
+
+def summarize_zone(z: dict, owner: dict[str, int], bucket_dim: str, buckets: list[str] | None = None,
+                   ua_owner: list[tuple[str, int]] | None = None) -> dict[int, dict]:
+    """Cloudflare aliases `paths` + `series` (filtered to integrator IPs / User-Agents) ->
+    {integrator_id: summary}. `owner` maps a normalized IP to its integrator; `ua_owner` lists
+    (pattern, integrator_id). Paths are grouped by method + masked path (so /products/123 and
+    /products/456 are one row). Rows matching no integrator are ignored."""
+    resolve = make_resolver(owner, ua_owner)
     acc: dict[int, dict] = {}
     for g in z.get("paths") or []:
         d = g["dimensions"]
-        try:
-            iid = owner.get(normalize_ip(d.get("clientIP") or ""))
-        except ValueError:
-            iid = None
-        if iid is None:
+        hit = resolve(d.get("clientIP") or "", d.get("userAgent") or "")
+        if hit is None:
             continue
+        iid, pattern = hit
         e = acc.setdefault(iid, _empty(iid))
         n, b = g["count"], (g.get("sum") or {}).get("edgeResponseBytes") or 0
         status = d.get("edgeResponseStatus") or 0
@@ -77,8 +127,16 @@ def summarize_zone(z: dict, owner: dict[str, int], bucket_dim: str, buckets: lis
         e["cached"] += n if is_cached else 0
         e["errors_4xx"] += n if is_4xx else 0
         e["errors_5xx"] += n if is_5xx else 0
-        ip = normalize_ip(d["clientIP"])
-        e["ips"][ip] = e["ips"].get(ip, 0) + n
+        try:
+            ip = normalize_ip(d.get("clientIP") or "")
+            e["ips"][ip] = e["ips"].get(ip, 0) + n
+        except ValueError:
+            pass
+        if pattern:
+            e["agents"][pattern] = e["agents"].get(pattern, 0) + n
+        ua = d.get("userAgent") or ""
+        if ua:
+            e["ua_raw"][ua] = e["ua_raw"].get(ua, 0) + n
         path = mask_path(d.get("clientRequestPath") or "/")
         path = path if len(path) <= MAX_PATH else path[:MAX_PATH] + "…"
         method = d.get("clientRequestHTTPMethodName") or ""
@@ -93,13 +151,10 @@ def summarize_zone(z: dict, owner: dict[str, int], bucket_dim: str, buckets: lis
 
     for g in z.get("series") or []:
         d = g["dimensions"]
-        try:
-            iid = owner.get(normalize_ip(d.get("clientIP") or ""))
-        except ValueError:
-            iid = None
-        if iid is None:
+        hit = resolve(d.get("clientIP") or "", d.get("userAgent") or "")
+        if hit is None:
             continue
-        e = acc.setdefault(iid, _empty(iid))
+        e = acc.setdefault(hit[0], _empty(hit[0]))
         t = d.get(bucket_dim)
         e["series"][t] = e["series"].get(t, 0) + g["count"]
 
@@ -113,7 +168,9 @@ def summarize_zone(z: dict, owner: dict[str, int], bucket_dim: str, buckets: lis
         out[iid] = {
             "integrator_id": iid, "requests": e["requests"], "bytes": e["bytes"], "cached": e["cached"],
             "errors_4xx": e["errors_4xx"], "errors_5xx": e["errors_5xx"],
-            "ips": [{"ip": ip, "requests": n} for ip, n in sorted(e["ips"].items(), key=lambda kv: -kv[1])],
+            "ips": [{"ip": ip, "requests": n} for ip, n in _ranked(e["ips"])],
+            "agents": [{"pattern": k, "requests": n} for k, n in _ranked(e["agents"])],
+            "ua_raw": [{"user_agent": k, "requests": n} for k, n in _ranked(e["ua_raw"])[:TOP_DETECTED]],
             "paths": paths,
             "series": [{"t": t, "requests": e["series"].get(t, 0)} for t in keys],
             "last_seen": seen[-1] if seen else None,
@@ -123,12 +180,12 @@ def summarize_zone(z: dict, owner: dict[str, int], bucket_dim: str, buckets: lis
 
 def _zero_client() -> dict:
     return {"requests": 0, "bytes": 0, "cached": 0, "errors_4xx": 0, "errors_5xx": 0,
-            "ips": [], "paths": [], "series": [], "last_seen": None}
+            "ips": [], "agents": [], "ua_raw": [], "paths": [], "series": [], "last_seen": None}
 
 
 def group_by_integrator(integrators: list[dict], client_rows: list[dict], minutes: int) -> list[dict]:
-    """integrators: [{id, name, active, ips: [{ip, label}], client_ids: [id, ...]}] — the clients
-    each integrator is linked to; only those count.
+    """integrators: [{id, name, active, ips: [{ip, label}], user_agents: [{pattern, label}],
+    client_ids: [id, ...]}] — the clients each integrator is linked to; only those count.
     client_rows: [{client_id, client_name, site_host, error, by_integrator: {id: summarize_zone() entry}}].
     -> one entry per integrator with totals and one row per linked client (also the ones with no
     traffic, carrying `error` when the site couldn't be measured), busiest first."""
@@ -149,9 +206,16 @@ def group_by_integrator(integrators: list[dict], client_rows: list[dict], minute
         e4 = sum(c["errors_4xx"] for c in by_client)
         e5 = sum(c["errors_5xx"] for c in by_client)
         seen_ips: dict[str, int] = {}
+        seen_agents: dict[str, int] = {}
+        seen_raw: dict[str, int] = {}
         for c in by_client:
             for x in c["ips"]:
                 seen_ips[x["ip"]] = seen_ips.get(x["ip"], 0) + x["requests"]
+            for x in c.get("agents", []):
+                seen_agents[x["pattern"]] = seen_agents.get(x["pattern"], 0) + x["requests"]
+            for x in c.get("ua_raw", []):
+                seen_raw[x["user_agent"]] = seen_raw.get(x["user_agent"], 0) + x["requests"]
+        registered = {x["ip"] for x in it.get("ips", [])}
         last = max((c["last_seen"] for c in by_client if c["last_seen"]), default=None)
         out.append({
             "id": it["id"], "name": it["name"], "active": it.get("active", True),
@@ -162,6 +226,11 @@ def group_by_integrator(integrators: list[dict], client_rows: list[dict], minute
             "error_rate": round((e4 + e5) / req, 4) if req else 0.0,
             "last_seen": last,
             "ips": [{"ip": x["ip"], "label": x.get("label"), "requests": seen_ips.get(x["ip"], 0)} for x in it.get("ips", [])],
+            "user_agents": [{"pattern": x["pattern"], "label": x.get("label"), "requests": seen_agents.get(x["pattern"], 0)}
+                            for x in it.get("user_agents", [])],
+            # IPs it was seen from that aren't registered (matched by User-Agent): candidates to add.
+            "detected_ips": [{"ip": ip, "requests": n} for ip, n in _ranked(seen_ips) if ip not in registered][:TOP_DETECTED],
+            "ua_seen": [{"user_agent": k, "requests": n} for k, n in _ranked(seen_raw)][:TOP_DETECTED],
             "clients": by_client,
         })
     out.sort(key=lambda e: (-e["requests"], e["name"].lower()))

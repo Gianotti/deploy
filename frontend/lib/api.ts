@@ -743,12 +743,16 @@ export async function getPublicCloudflare(): Promise<ExecCloudflare> {
 // ── Integrators (third parties calling our APIs from known IPs) ─────────────
 
 export interface IntegratorIP { id?: number; ip: string; label: string | null }
+/** A request is the integrator's when its User-Agent contains `pattern` (case-sensitive). */
+export interface IntegratorUA { id?: number; pattern: string; label: string | null }
 export interface Integrator {
   id: number; name: string; notes: string | null; active: boolean; ips: IntegratorIP[];
+  user_agents: IntegratorUA[];
   clients: { id: number; name: string; site_host: string | null }[];
 }
 export interface IntegratorInput {
-  name: string; notes: string | null; active: boolean; ips: { ip: string; label: string | null }[]; client_ids: number[];
+  name: string; notes: string | null; active: boolean; ips: { ip: string; label: string | null }[];
+  user_agents: { pattern: string; label: string | null }[]; client_ids: number[];
 }
 
 export interface IntegratorPathRow {
@@ -770,6 +774,11 @@ export interface IntegratorTrafficRow {
   requests: number; requests_per_min: number; bytes: number;
   errors_4xx: number; errors_5xx: number; error_rate: number; last_seen: string | null;
   ips: { ip: string; label: string | null; requests: number }[];
+  user_agents: { pattern: string; label: string | null; requests: number }[];
+  /** IPs it was seen from that aren't registered (matched by User-Agent). */
+  detected_ips: { ip: string; requests: number }[];
+  /** Full User-Agent strings seen, busiest first. */
+  ua_seen: { user_agent: string; requests: number }[];
   clients: IntegratorClientTraffic[];
 }
 export interface IntegratorTraffic {

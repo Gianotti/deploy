@@ -1,6 +1,26 @@
 from pydantic import BaseModel, field_validator
 
-from app.services.integrators import normalize_ip
+from app.services.integrators import normalize_ip, normalize_ua_pattern
+
+
+def _clean_label(v: str | None) -> str | None:
+    v = (v or "").strip()
+    return v or None
+
+
+class IntegratorUAIn(BaseModel):
+    pattern: str
+    label: str | None = None
+
+    @field_validator("pattern")
+    @classmethod
+    def _pattern(cls, v: str) -> str:
+        return normalize_ua_pattern(v)
+
+    @field_validator("label")
+    @classmethod
+    def _label(cls, v: str | None) -> str | None:
+        return _clean_label(v)
 
 
 class IntegratorIPIn(BaseModel):
@@ -24,7 +44,18 @@ class IntegratorIn(BaseModel):
     notes: str | None = None
     active: bool = True
     ips: list[IntegratorIPIn] = []
+    user_agents: list[IntegratorUAIn] = []
     client_ids: list[int] = []
+
+    @field_validator("user_agents")
+    @classmethod
+    def _unique_ua(cls, v: list[IntegratorUAIn]) -> list[IntegratorUAIn]:
+        seen = set()
+        for x in v:
+            if x.pattern in seen:
+                raise ValueError(f"El user-agent {x.pattern} está repetido")
+            seen.add(x.pattern)
+        return v
 
     @field_validator("client_ids")
     @classmethod
@@ -57,6 +88,13 @@ class IntegratorIPOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class IntegratorUAOut(BaseModel):
+    id: int
+    pattern: str
+    label: str | None = None
+    model_config = {"from_attributes": True}
+
+
 class IntegratorClientOut(BaseModel):
     id: int
     name: str
@@ -70,5 +108,6 @@ class IntegratorOut(BaseModel):
     notes: str | None = None
     active: bool
     ips: list[IntegratorIPOut] = []
+    user_agents: list[IntegratorUAOut] = []
     clients: list[IntegratorClientOut] = []
     model_config = {"from_attributes": True}

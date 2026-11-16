@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user, require_admin
 from app.db.base import get_db
 from app.models.client import Client
-from app.models.integrator import Integrator, IntegratorIP
+from app.models.integrator import Integrator, IntegratorIP, IntegratorUserAgent
 from app.schemas.integrator import IntegratorIn, IntegratorOut
 from app.services import cloudflare_service
 from app.services import integrators as svc
@@ -35,6 +35,18 @@ def _check_ips(db: Session, payload: IntegratorIn, own_id: int | None) -> None:
         raise HTTPException(400, f"La IP {clash.ip} ya pertenece a {clash.integrator.name}")
 
 
+def _check_uas(db: Session, payload: IntegratorIn, own_id: int | None) -> None:
+    pats = [x.pattern for x in payload.user_agents]
+    if not pats:
+        return
+    q = db.query(IntegratorUserAgent).filter(IntegratorUserAgent.pattern.in_(pats))
+    if own_id is not None:
+        q = q.filter(IntegratorUserAgent.integrator_id != own_id)
+    clash = q.first()
+    if clash:
+        raise HTTPException(400, f"El user-agent {clash.pattern} ya pertenece a {clash.integrator.name}")
+
+
 def _check_name(db: Session, name: str, own_id: int | None) -> None:
     q = db.query(Integrator).filter(Integrator.name.ilike(name))
     if own_id is not None:
@@ -57,8 +69,10 @@ def _clients(db: Session, ids: list[int]) -> list[Client]:
 def create_integrator(payload: IntegratorIn, db: Session = Depends(get_db)):
     _check_name(db, payload.name, None)
     _check_ips(db, payload, None)
+    _check_uas(db, payload, None)
     it = Integrator(name=payload.name, notes=payload.notes, active=payload.active,
                     ips=[IntegratorIP(ip=x.ip, label=x.label) for x in payload.ips],
+                    user_agents=[IntegratorUserAgent(pattern=x.pattern, label=x.label) for x in payload.user_agents],
                     clients=_clients(db, payload.client_ids))
     db.add(it)
     db.commit()
@@ -73,18 +87,27 @@ def update_integrator(integrator_id: int, payload: IntegratorIn, db: Session = D
         raise HTTPException(404, "Integrador no encontrado")
     _check_name(db, payload.name, it.id)
     _check_ips(db, payload, it.id)
+    _check_uas(db, payload, it.id)
     it.name, it.notes, it.active = payload.name, payload.notes, payload.active
     it.clients = _clients(db, payload.client_ids)
-    # Replace the IP list, keeping rows whose IP didn't change.
+    # Replace the IP and User-Agent lists, keeping rows whose value didn't change.
     wanted = {x.ip: x.label for x in payload.ips}
     for row in list(it.ips):
         if row.ip not in wanted:
             it.ips.remove(row)
         else:
             row.label = wanted.pop(row.ip)
+    wanted_ua = {x.pattern: x.label for x in payload.user_agents}
+    for row in list(it.user_agents):
+        if row.pattern not in wanted_ua:
+            it.user_agents.remove(row)
+        else:
+            row.label = wanted_ua.pop(row.pattern)
     db.flush()
     for ip, label in wanted.items():
         it.ips.append(IntegratorIP(ip=ip, label=label))
+    for pattern, label in wanted_ua.items():
+        it.user_agents.append(IntegratorUserAgent(pattern=pattern, label=label))
     db.commit()
     db.refresh(it)
     return it
@@ -128,6 +151,7 @@ def build_integrator_traffic(db: Session, minutes: int, client_id: int | None, p
             clients[c.id] = c
         its.append({"id": i.id, "name": i.name, "active": i.active,
                     "ips": [{"ip": x.ip, "label": x.label} for x in i.ips],
+                    "user_agents": [{"pattern": x.pattern, "label": x.label} for x in i.user_agents],
                     "client_ids": [c.id for c in linked]})
     base = {"generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"), "minutes": minutes}
     creds = get_cf_creds(db)
@@ -140,18 +164,21 @@ def build_integrator_traffic(db: Session, minutes: int, client_id: int | None, p
     def fetch(c: Client) -> dict:
         host = cloudflare_service.normalize_host(c.site_host) if c.site_host else None
         row = {"client_id": c.id, "client_name": c.name, "site_host": host, "by_integrator": {}, "error": None, "stale": False}
-        # Only the IPs of the integrators linked to this client.
-        owner = {x["ip"]: i["id"] for i in its if c.id in i["client_ids"] for x in i["ips"]}
+        # Only the IPs / User-Agents of the integrators linked to this client.
+        mine = [i for i in its if c.id in i["client_ids"]]
+        owner = {x["ip"]: i["id"] for i in mine for x in i["ips"]}
+        ua_owner = [(x["pattern"], i["id"]) for i in mine for x in i["user_agents"]]
         if not host:
             row["error"] = "Sin dominio configurado (Admin → Clientes)"
             return row
-        if not owner:
+        if not owner and not ua_owner:
             return row
         try:
             raw = cloudflare_service.get_integrator_traffic(
-                creds["account_id"], creds["api_token"], host, sorted(owner), minutes, bucket_dim)
+                creds["account_id"], creds["api_token"], host, sorted(owner), minutes, bucket_dim,
+                user_agents=[p for p, _ in ua_owner])
             if raw:
-                row["by_integrator"] = svc.summarize_zone(raw, owner, bucket_dim, buckets)
+                row["by_integrator"] = svc.summarize_zone(raw, owner, bucket_dim, buckets, ua_owner)
                 row["stale"] = bool(raw.get("stale"))
             else:
                 row["error"] = f"{host} no está en ninguna zona de Cloudflare"
