@@ -77,7 +77,9 @@ def bucket_keys(now: datetime, minutes: int, size: int) -> list[str]:
 
 def normalize_path_prefix(value: str) -> str:
     """'api/v1/products/' -> '/api/v1/products/'. A full URL keeps only its path; query strings are
-    dropped. Raises ValueError. Matching is "the request path starts with it" (case-sensitive)."""
+    dropped. Raises ValueError. Matching is "the request path starts with it" (case-sensitive);
+    `*` is a wildcard for any characters ('/api/*/orders'), and a trailing one is redundant, so
+    '/api/v1/products/*' is stored as '/api/v1/products/'."""
     v = (value or "").strip()
     if "://" in v:
         v = v.split("://", 1)[1]
@@ -87,8 +89,9 @@ def normalize_path_prefix(value: str) -> str:
         v = "/" + v
     if "%" in v or any(c.isspace() for c in v):
         raise ValueError(f"{v}: el path no puede tener % ni espacios")
+    v = re.sub(r"\*+", "*", v).rstrip("*")
     if len(v) < 2:
-        raise ValueError("Path vacío: “/” solo incluiría todo el sitio")
+        raise ValueError("“/” o “/*” solo incluiría todo el sitio: para cualquier path dejá la lista vacía")
     return v
 
 
@@ -120,7 +123,12 @@ def split_consumes(text: str | None) -> list[str]:
 
 def path_like(prefix: str) -> str:
     """Cloudflare `clientRequestPath_like` value for "path starts with prefix"."""
-    return f"{prefix}%"
+    return prefix.replace("*", "%") + "%"
+
+
+def path_matcher(prefix: str) -> re.Pattern:
+    """Local equivalent of `path_like`: starts with `prefix`, `*` = any characters."""
+    return re.compile("^" + ".*".join(re.escape(x) for x in prefix.split("*")))
 
 
 def make_resolver(owner: dict[str, int], ua_owner: list[tuple[str, int]] | None = None,
@@ -138,11 +146,11 @@ def make_resolver(owner: dict[str, int], ua_owner: list[tuple[str, int]] | None 
         if iid not in by_pattern.setdefault(p, []):
             by_pattern[p].append(iid)
     ordered = sorted(by_pattern, key=lambda p: (-len(p), p))
-    prefixes = path_owner or {}
+    prefixes = {iid: [path_matcher(x) for x in pre] for iid, pre in (path_owner or {}).items()}
 
     def consumes(iid: int, path: str | None) -> bool:
         pre = prefixes.get(iid)
-        return not pre or path is None or any(path.startswith(x) for x in pre)
+        return not pre or path is None or any(x.match(path) for x in pre)
 
     def resolve(ip: str, ua: str, path: str | None = None) -> list[tuple[int, str | None]]:
         try:

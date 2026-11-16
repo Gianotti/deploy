@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 import pytest
 
 from app.services.integrators import (bucket_for, bucket_keys, group_by_integrator, normalize_ip, normalize_path_prefix,
-                                      normalize_ua_pattern, paths_from_text,
+                                      normalize_ua_pattern, path_like, path_matcher, paths_from_text,
                                       summarize_zone, ua_like)
 
 
@@ -126,7 +126,11 @@ def test_shared_user_agent_counts_for_each_integrator():
 def test_normalize_path_prefix_and_paths_from_text():
     assert normalize_path_prefix(" api/v1/products/ ") == "/api/v1/products/"
     assert normalize_path_prefix("https://bna.com/api/v1/orders/?x=1") == "/api/v1/orders/"
-    for bad in ("/", "", "/a b", "/a%"):
+    assert normalize_path_prefix("/api/v1/products/*") == "/api/v1/products/"
+    assert normalize_path_prefix("/api/**/orders") == "/api/*/orders"
+    assert path_like("/api/*/orders") == "/api/%/orders%"
+    assert path_matcher("/api/*/orders").match("/api/v2/orders/9") and not path_matcher("/api/*/orders").match("/x/api/v2/orders")
+    for bad in ("/", "/*", "*", "", "/a b", "/a%"):
         with pytest.raises(ValueError):
             normalize_path_prefix(bad)
     notes = "Consume BNA: api/v1/authenticate, api/v1/products/, api/v1/orders/. Soporte 24/7 y/o mail."
@@ -145,7 +149,7 @@ def test_summarize_zone_only_counts_consumed_paths():
                     {"count": 9, "dimensions": {"clientIP": "1.1.1.1", "userAgent": "",
                                                 "clientRequestPath": "/login/", "datetimeMinute": "t1"}}]}
     out = summarize_zone(z, owner, "datetimeMinute", ["t1"], [("AcmeSDK/", 2)],
-                         {1: ["/api/v1/products/"], 2: ["/api/v1/orders/"]})
+                         {1: ["/api/v1/products/"], 2: ["/api/*/orders/"]})
     assert out[1]["requests"] == 10 and out[1]["errors_4xx"] == 0
     assert out[1]["series"] == [{"t": "t1", "requests": 10}]
     assert out[2]["requests"] == 3 and [p["path"] for p in out[2]["paths"]] == ["/api/v1/orders/:id"]
