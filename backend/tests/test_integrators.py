@@ -98,9 +98,28 @@ def test_summarize_zone_matches_by_user_agent():
     its = [{"id": 1, "name": "Sincroshop", "client_ids": [7], "ips": [{"ip": "100.25.27.248", "label": None}],
             "user_agents": [{"pattern": "Sincro", "label": "app"}]}]
     g = group_by_integrator(its, rows, 60)[0]
-    assert g["user_agents"] == [{"pattern": "Sincro", "label": "app", "requests": 7}]
+    assert g["user_agents"] == [{"pattern": "Sincro", "label": "app", "requests": 7, "shared_with": []}]
     assert g["detected_ips"] == [{"ip": "5.5.5.5", "requests": 7}]
     assert g["ua_seen"][0] == {"user_agent": "curl/8", "requests": 10}
+
+
+def test_shared_user_agent_counts_for_each_integrator():
+    # Two integrators use the same SDK User-Agent; a third has a more specific one.
+    ua_owner = [("AcmeSDK/", 1), ("AcmeSDK/", 2), ("AcmeSDK/3 Shop", 3)]
+    z = {"paths": [_p(10, "5.5.5.5", "/a", ua="AcmeSDK/2"),
+                   _p(4, "6.6.6.6", "/b", ua="AcmeSDK/3 Shop"),       # longest wins: only #3
+                   _p(1, "7.7.7.7", "/c", ua="AcmeSDK/2")],
+         "series": [_s(11, "5.5.5.5", "t1", ua="AcmeSDK/2")]}
+    out = summarize_zone(z, {"7.7.7.7": 2}, "datetimeMinute", ["t1"], ua_owner)
+    assert (out[1]["requests"], out[1]["shared"]) == (10, 10)
+    assert (out[2]["requests"], out[2]["shared"]) == (11, 10)            # +1 from its own IP, not shared
+    assert (out[3]["requests"], out[3]["shared"]) == (4, 0)
+    assert out[1]["series"] == out[2]["series"] == [{"t": "t1", "requests": 11}]
+    rows = [{"client_id": 7, "client_name": "BNA", "site_host": "bna.com", "by_integrator": out}]
+    its = [{"id": i, "name": n, "client_ids": [7], "ips": [], "user_agents": [{"pattern": "AcmeSDK/", "label": None}]}
+           for i, n in ((1, "Uno"), (2, "Dos"))]
+    g = {e["id"]: e for e in group_by_integrator(its, rows, 60)}
+    assert g[1]["shared_requests"] == 10 and g[1]["user_agents"][0]["shared_with"] == ["Dos"]
 
 
 def test_buckets():

@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, ForeignKey, Integer, String, Table, Text
+from sqlalchemy import Boolean, Column, ForeignKey, Integer, String, Table, Text, UniqueConstraint
 from sqlalchemy.orm import relationship
 
 from app.db.base import Base
@@ -43,12 +43,14 @@ class IntegratorIP(Base):
 class IntegratorUserAgent(Base):
     """A User-Agent fragment that identifies an integrator when its IPs are unknown.
     A request matches when its User-Agent contains `pattern` (case-sensitive, like Cloudflare's
-    `userAgent_like`; `_` matches any single character)."""
+    `userAgent_like`; `_` matches any single character). Several integrators may share a pattern
+    (e.g. the same SDK); then its requests count for each of them on the stores they share."""
     __tablename__ = "integrator_user_agents"
+    __table_args__ = (UniqueConstraint("integrator_id", "pattern", name="uq_integrator_user_agents_integrator_pattern"),)
 
     id = Column(Integer, primary_key=True, index=True)
     integrator_id = Column(Integer, ForeignKey("integrators.id", ondelete="CASCADE"), nullable=False, index=True)
-    pattern = Column(String, nullable=False, unique=True)
+    pattern = Column(String, nullable=False)
     label = Column(String, nullable=True)
 
     integrator = relationship("Integrator", back_populates="user_agents")

@@ -774,7 +774,10 @@ export interface IntegratorTrafficRow {
   requests: number; requests_per_min: number; bytes: number;
   errors_4xx: number; errors_5xx: number; error_rate: number; last_seen: string | null;
   ips: { ip: string; label: string | null; requests: number }[];
-  user_agents: { pattern: string; label: string | null; requests: number }[];
+  /** `shared_with`: other integrators with the same pattern; those requests count for each of them. */
+  user_agents: { pattern: string; label: string | null; requests: number; shared_with: string[] }[];
+  /** Requests also counted for another integrator with the same User-Agent. */
+  shared_requests: number;
   /** IPs it was seen from that aren't registered (matched by User-Agent). */
   detected_ips: { ip: string; requests: number }[];
   /** Full User-Agent strings seen, busiest first. */

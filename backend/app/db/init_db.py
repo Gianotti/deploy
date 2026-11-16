@@ -62,6 +62,11 @@ def _patch_missing_columns() -> None:
                     conn.execute(text(ddl))
                     print(f"  → team_notification_slots.{col} added")
 
+        # A User-Agent may be shared by several integrators (migration 010).
+        if has_table("integrator_user_agents"):
+            conn.execute(text(
+                "ALTER TABLE integrator_user_agents DROP CONSTRAINT IF EXISTS integrator_user_agents_pattern_key"))
+
 
 def init() -> None:
     with engine.connect() as probe:

@@ -35,18 +35,6 @@ def _check_ips(db: Session, payload: IntegratorIn, own_id: int | None) -> None:
         raise HTTPException(400, f"La IP {clash.ip} ya pertenece a {clash.integrator.name}")
 
 
-def _check_uas(db: Session, payload: IntegratorIn, own_id: int | None) -> None:
-    pats = [x.pattern for x in payload.user_agents]
-    if not pats:
-        return
-    q = db.query(IntegratorUserAgent).filter(IntegratorUserAgent.pattern.in_(pats))
-    if own_id is not None:
-        q = q.filter(IntegratorUserAgent.integrator_id != own_id)
-    clash = q.first()
-    if clash:
-        raise HTTPException(400, f"El user-agent {clash.pattern} ya pertenece a {clash.integrator.name}")
-
-
 def _check_name(db: Session, name: str, own_id: int | None) -> None:
     q = db.query(Integrator).filter(Integrator.name.ilike(name))
     if own_id is not None:
@@ -69,7 +57,6 @@ def _clients(db: Session, ids: list[int]) -> list[Client]:
 def create_integrator(payload: IntegratorIn, db: Session = Depends(get_db)):
     _check_name(db, payload.name, None)
     _check_ips(db, payload, None)
-    _check_uas(db, payload, None)
     it = Integrator(name=payload.name, notes=payload.notes, active=payload.active,
                     ips=[IntegratorIP(ip=x.ip, label=x.label) for x in payload.ips],
                     user_agents=[IntegratorUserAgent(pattern=x.pattern, label=x.label) for x in payload.user_agents],
@@ -87,7 +74,6 @@ def update_integrator(integrator_id: int, payload: IntegratorIn, db: Session = D
         raise HTTPException(404, "Integrador no encontrado")
     _check_name(db, payload.name, it.id)
     _check_ips(db, payload, it.id)
-    _check_uas(db, payload, it.id)
     it.name, it.notes, it.active = payload.name, payload.notes, payload.active
     it.clients = _clients(db, payload.client_ids)
     # Replace the IP and User-Agent lists, keeping rows whose value didn't change.
@@ -176,7 +162,7 @@ def build_integrator_traffic(db: Session, minutes: int, client_id: int | None, p
         try:
             raw = cloudflare_service.get_integrator_traffic(
                 creds["account_id"], creds["api_token"], host, sorted(owner), minutes, bucket_dim,
-                user_agents=[p for p, _ in ua_owner])
+                user_agents=sorted({p for p, _ in ua_owner}))
             if raw:
                 row["by_integrator"] = svc.summarize_zone(raw, owner, bucket_dim, buckets, ua_owner)
                 row["stale"] = bool(raw.get("stale"))

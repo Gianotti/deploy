@@ -170,17 +170,26 @@ function IntegratorPanel({ row, minutes, single }: { row: IntegratorTrafficRow; 
           </span>
         ))}
         {row.user_agents.map((u) => (
-          <span key={u.pattern} title={`User-agent que contiene “${u.pattern}”` + (u.requests ? ` · ${num(u.requests)} requests en la ventana` : " · sin requests en la ventana")}
+          <span key={u.pattern} title={`User-agent que contiene “${u.pattern}”` + (u.requests ? ` · ${num(u.requests)} requests en la ventana` : " · sin requests en la ventana")
+                  + (u.shared_with.length ? ` · compartido con ${u.shared_with.join(", ")}: esas requests cuentan para cada uno` : "")}
                 className="inline-flex items-center gap-1.5 rounded-full border border-dashed border-gray-300 dark:border-navy-600 px-2.5 py-0.5 text-xs max-w-full">
             <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${u.requests ? "bg-up" : "bg-ink-3/50"}`} aria-hidden />
             <span className={muted}>UA</span>
             <span className="font-mono text-gray-700 dark:text-gray-200 truncate">{u.pattern}</span>
             {u.label && <span className={muted}>{u.label}</span>}
+            {u.shared_with.length > 0 && <span className={muted}>· también {u.shared_with.join(", ")}</span>}
             <span className="tabular-nums text-gray-900 dark:text-white">{num(u.requests)}</span>
           </span>
         ))}
         {row.ips.length === 0 && row.user_agents.length === 0 && <span className={`text-xs ${muted}`}>Sin IPs ni user-agents cargados</span>}
       </div>
+
+      {row.shared_requests > 0 && (
+        <p className={`text-xs ${muted}`}>
+          {num(row.shared_requests)} de sus requests llegaron con un user-agent que comparte con otro integrador y también se cuentan allá.
+          Para separarlas, cargá un user-agent más específico o sus IPs.
+        </p>
+      )}
 
       {(row.detected_ips.length > 0 || (row.user_agents.length > 0 && row.ua_seen.length > 0)) && (
         <details className="rounded-lg bg-gray-50 dark:bg-navy-900/40 px-3 py-2 text-sm">
@@ -510,7 +519,7 @@ function IntegratorForm({ initial, clients, onSave, onCancel, saving, error }: {
           <textarea className="field w-full font-mono text-sm" rows={4} placeholder={"SincroshopBot/2.1 | Sync de stock\nAcmeConnector"}
                     value={d.uas} onChange={(e) => setD({ ...d, uas: e.target.value })} />
           <span className={`block text-xs ${muted} mt-1`}>
-            Busca que el user-agent <em>contenga</em> el texto; distingue mayúsculas. Mínimo 4 caracteres. Evitá textos genéricos como “Mozilla” u “okhttp” solos: también los usan otros.
+            Busca que el user-agent <em>contenga</em> el texto; distingue mayúsculas. Mínimo 4 caracteres. Puede repetirse en otros integradores: si comparten tienda, esas requests cuentan para cada uno. Evitá textos genéricos como “Mozilla” solo.
           </span>
         </label>
       </div>

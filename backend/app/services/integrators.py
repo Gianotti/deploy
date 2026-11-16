@@ -76,26 +76,41 @@ def bucket_keys(now: datetime, minutes: int, size: int) -> list[str]:
 
 
 def make_resolver(owner: dict[str, int], ua_owner: list[tuple[str, int]] | None = None):
-    """(clientIP, userAgent) -> (integrator_id, matched UA pattern or None), or None if nobody's.
-    A registered IP wins over a User-Agent match; among patterns the longest (most specific) wins."""
-    uas = sorted(((p, _ua_regex(p), iid) for p, iid in (ua_owner or [])), key=lambda x: -len(x[0]))
+    """(clientIP, userAgent) -> [(integrator_id, matched UA pattern or None), ...]; empty if nobody's.
+    A registered IP wins over a User-Agent match (one owner). Among patterns the longest (most
+    specific) wins; a pattern shared by several integrators yields all of them, so the request
+    counts for each (we can't tell them apart)."""
+    regex: dict[str, re.Pattern] = {}
+    by_pattern: dict[str, list[int]] = {}
+    for p, iid in ua_owner or []:
+        regex.setdefault(p, _ua_regex(p))
+        if iid not in by_pattern.setdefault(p, []):
+            by_pattern[p].append(iid)
+    ordered = sorted(by_pattern, key=lambda p: (-len(p), p))
 
-    def resolve(ip: str, ua: str):
+    def resolve(ip: str, ua: str) -> list[tuple[int, str | None]]:
         try:
             iid = owner.get(normalize_ip(ip or ""))
         except ValueError:
             iid = None
         if iid is not None:
-            return iid, None
-        for p, rx, iid in uas:
-            if ua and rx.search(ua):
-                return iid, p
-        return None
+            return [(iid, None)]
+        if not ua:
+            return []
+        best = None
+        hits: list[tuple[int, str]] = []
+        for p in ordered:
+            if best is not None and len(p) < best:
+                break
+            if regex[p].search(ua):
+                best = len(p)
+                hits += [(i, p) for i in by_pattern[p] if all(i != h for h, _ in hits)]
+        return hits
     return resolve
 
 
 def _empty(iid: int) -> dict:
-    return {"integrator_id": iid, "requests": 0, "bytes": 0, "cached": 0, "errors_4xx": 0, "errors_5xx": 0,
+    return {"integrator_id": iid, "requests": 0, "bytes": 0, "cached": 0, "errors_4xx": 0, "errors_5xx": 0, "shared": 0,
             "ips": {}, "agents": {}, "ua_raw": {}, "paths": {}, "series": {}}
 
 
@@ -113,50 +128,15 @@ def summarize_zone(z: dict, owner: dict[str, int], bucket_dim: str, buckets: lis
     acc: dict[int, dict] = {}
     for g in z.get("paths") or []:
         d = g["dimensions"]
-        hit = resolve(d.get("clientIP") or "", d.get("userAgent") or "")
-        if hit is None:
-            continue
-        iid, pattern = hit
-        e = acc.setdefault(iid, _empty(iid))
-        n, b = g["count"], (g.get("sum") or {}).get("edgeResponseBytes") or 0
-        status = d.get("edgeResponseStatus") or 0
-        is_4xx, is_5xx = 400 <= status < 500, status >= 500
-        is_cached = d.get("cacheStatus") in _CACHED
-        e["requests"] += n
-        e["bytes"] += b
-        e["cached"] += n if is_cached else 0
-        e["errors_4xx"] += n if is_4xx else 0
-        e["errors_5xx"] += n if is_5xx else 0
-        try:
-            ip = normalize_ip(d.get("clientIP") or "")
-            e["ips"][ip] = e["ips"].get(ip, 0) + n
-        except ValueError:
-            pass
-        if pattern:
-            e["agents"][pattern] = e["agents"].get(pattern, 0) + n
-        ua = d.get("userAgent") or ""
-        if ua:
-            e["ua_raw"][ua] = e["ua_raw"].get(ua, 0) + n
-        path = mask_path(d.get("clientRequestPath") or "/")
-        path = path if len(path) <= MAX_PATH else path[:MAX_PATH] + "…"
-        method = d.get("clientRequestHTTPMethodName") or ""
-        p = e["paths"].setdefault((method, path), {"method": method, "path": path, "requests": 0, "bytes": 0,
-                                                   "errors_4xx": 0, "errors_5xx": 0, "status": {}})
-        p["requests"] += n
-        p["bytes"] += b
-        p["errors_4xx"] += n if is_4xx else 0
-        p["errors_5xx"] += n if is_5xx else 0
-        if status:
-            p["status"][str(status)] = p["status"].get(str(status), 0) + n
+        for iid, pattern in (hits := resolve(d.get("clientIP") or "", d.get("userAgent") or "")):
+            _add_path_row(acc.setdefault(iid, _empty(iid)), g, d, pattern, len(hits) > 1)
 
     for g in z.get("series") or []:
         d = g["dimensions"]
-        hit = resolve(d.get("clientIP") or "", d.get("userAgent") or "")
-        if hit is None:
-            continue
-        e = acc.setdefault(hit[0], _empty(hit[0]))
-        t = d.get(bucket_dim)
-        e["series"][t] = e["series"].get(t, 0) + g["count"]
+        for iid, _ in resolve(d.get("clientIP") or "", d.get("userAgent") or ""):
+            e = acc.setdefault(iid, _empty(iid))
+            t = d.get(bucket_dim)
+            e["series"][t] = e["series"].get(t, 0) + g["count"]
 
     out = {}
     for iid, e in acc.items():
@@ -167,7 +147,7 @@ def summarize_zone(z: dict, owner: dict[str, int], bucket_dim: str, buckets: lis
             p["status"] = dict(sorted(p["status"].items(), key=lambda kv: -kv[1]))
         out[iid] = {
             "integrator_id": iid, "requests": e["requests"], "bytes": e["bytes"], "cached": e["cached"],
-            "errors_4xx": e["errors_4xx"], "errors_5xx": e["errors_5xx"],
+            "errors_4xx": e["errors_4xx"], "errors_5xx": e["errors_5xx"], "shared": e["shared"],
             "ips": [{"ip": ip, "requests": n} for ip, n in _ranked(e["ips"])],
             "agents": [{"pattern": k, "requests": n} for k, n in _ranked(e["agents"])],
             "ua_raw": [{"user_agent": k, "requests": n} for k, n in _ranked(e["ua_raw"])[:TOP_DETECTED]],
@@ -178,8 +158,44 @@ def summarize_zone(z: dict, owner: dict[str, int], bucket_dim: str, buckets: lis
     return out
 
 
+def _add_path_row(e: dict, g: dict, d: dict, pattern: str | None, shared: bool) -> None:
+    """Adds one Cloudflare `paths` group to an integrator's accumulator. `shared` = the same
+    request was also counted for another integrator with the same User-Agent pattern."""
+    n, b = g["count"], (g.get("sum") or {}).get("edgeResponseBytes") or 0
+    status = d.get("edgeResponseStatus") or 0
+    is_4xx, is_5xx = 400 <= status < 500, status >= 500
+    is_cached = d.get("cacheStatus") in _CACHED
+    e["shared"] += n if shared else 0
+    e["requests"] += n
+    e["bytes"] += b
+    e["cached"] += n if is_cached else 0
+    e["errors_4xx"] += n if is_4xx else 0
+    e["errors_5xx"] += n if is_5xx else 0
+    try:
+        ip = normalize_ip(d.get("clientIP") or "")
+        e["ips"][ip] = e["ips"].get(ip, 0) + n
+    except ValueError:
+        pass
+    if pattern:
+        e["agents"][pattern] = e["agents"].get(pattern, 0) + n
+    ua = d.get("userAgent") or ""
+    if ua:
+        e["ua_raw"][ua] = e["ua_raw"].get(ua, 0) + n
+    path = mask_path(d.get("clientRequestPath") or "/")
+    path = path if len(path) <= MAX_PATH else path[:MAX_PATH] + "…"
+    method = d.get("clientRequestHTTPMethodName") or ""
+    p = e["paths"].setdefault((method, path), {"method": method, "path": path, "requests": 0, "bytes": 0,
+                                               "errors_4xx": 0, "errors_5xx": 0, "status": {}})
+    p["requests"] += n
+    p["bytes"] += b
+    p["errors_4xx"] += n if is_4xx else 0
+    p["errors_5xx"] += n if is_5xx else 0
+    if status:
+        p["status"][str(status)] = p["status"].get(str(status), 0) + n
+
+
 def _zero_client() -> dict:
-    return {"requests": 0, "bytes": 0, "cached": 0, "errors_4xx": 0, "errors_5xx": 0,
+    return {"requests": 0, "bytes": 0, "cached": 0, "errors_4xx": 0, "errors_5xx": 0, "shared": 0,
             "ips": [], "agents": [], "ua_raw": [], "paths": [], "series": [], "last_seen": None}
 
 
@@ -190,6 +206,10 @@ def group_by_integrator(integrators: list[dict], client_rows: list[dict], minute
     -> one entry per integrator with totals and one row per linked client (also the ones with no
     traffic, carrying `error` when the site couldn't be measured), busiest first."""
     rows_by_id = {r["client_id"]: r for r in client_rows}
+    names_by_pattern: dict[str, list[str]] = {}
+    for it in integrators:
+        for x in it.get("user_agents", []):
+            names_by_pattern.setdefault(x["pattern"], []).append(it["name"])
     out = []
     for it in integrators:
         by_client = []
@@ -224,9 +244,13 @@ def group_by_integrator(integrators: list[dict], client_rows: list[dict], minute
             "bytes": sum(c["bytes"] for c in by_client),
             "errors_4xx": e4, "errors_5xx": e5,
             "error_rate": round((e4 + e5) / req, 4) if req else 0.0,
+            # Requests also counted for another integrator with the same User-Agent.
+            "shared_requests": sum(c.get("shared", 0) for c in by_client),
             "last_seen": last,
             "ips": [{"ip": x["ip"], "label": x.get("label"), "requests": seen_ips.get(x["ip"], 0)} for x in it.get("ips", [])],
-            "user_agents": [{"pattern": x["pattern"], "label": x.get("label"), "requests": seen_agents.get(x["pattern"], 0)}
+            "user_agents": [{"pattern": x["pattern"], "label": x.get("label"), "requests": seen_agents.get(x["pattern"], 0),
+                             "shared_with": sorted({n for n in names_by_pattern.get(x["pattern"], []) if n != it["name"]},
+                                                   key=str.lower)}
                             for x in it.get("user_agents", [])],
             # IPs it was seen from that aren't registered (matched by User-Agent): candidates to add.
             "detected_ips": [{"ip": ip, "requests": n} for ip, n in _ranked(seen_ips) if ip not in registered][:TOP_DETECTED],
